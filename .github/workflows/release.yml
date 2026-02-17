@@ -346,39 +346,17 @@ jobs:
   #
   # Publish Flutter SDK to pub.dev (OIDC — zero secrets)
   # Uses dart-lang/setup-dart reusable workflow for automatic OIDC token exchange.
+  # Requires trusted publisher configured on pub.dev for xybrid-ai/xybrid + release.yml.
   # This job does NOT block the GitHub Release — failure only affects pub.dev publishing.
-  #
-  # Fallback inline job (if reusable workflow doesn't support working-directory):
-  #   publish-flutter:
-  #     name: Publish Flutter to pub.dev
-  #     needs: [precompile-flutter]
-  #     runs-on: ubuntu-latest
-  #     permissions:
-  #       id-token: write
-  #     steps:
-  #       - uses: actions/checkout@v4
-  #       - uses: subosito/flutter-action@v2
-  #         with:
-  #           flutter-version: '3.35.7'
-  #       - run: dart pub publish --force
-  #         working-directory: bindings/flutter
   #
   publish-flutter:
     name: Publish Flutter to pub.dev
     needs: [precompile-flutter]
-    runs-on: ubuntu-latest
     permissions:
-      id-token: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: subosito/flutter-action@v2
-        with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-
-      - name: Publish to pub.dev
-        working-directory: bindings/flutter
-        run: dart pub publish --force
+      id-token: write   # Required for OIDC authentication with pub.dev
+    uses: dart-lang/setup-dart/.github/workflows/publish.yml@v1
+    with:
+      working-directory: bindings/flutter
 
   #
   # CLI builds (cross-platform matrix)
