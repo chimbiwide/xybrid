@@ -393,7 +393,7 @@ internal interface _UniFFILib : Library {
     ): RustBuffer.ByValue
     fun uniffi_xybrid_uniffi_fn_method_xybridmodel_has_voices(`ptr`: Pointer,_uniffi_out_err: RustCallStatus, 
     ): Byte
-    fun uniffi_xybrid_uniffi_fn_method_xybridmodel_run(`ptr`: Pointer,`envelope`: RustBuffer.ByValue,
+    fun uniffi_xybrid_uniffi_fn_method_xybridmodel_run(`ptr`: Pointer,`envelope`: RustBuffer.ByValue,`config`: RustBuffer.ByValue,
     ): Pointer
     fun uniffi_xybrid_uniffi_fn_method_xybridmodel_voice(`ptr`: Pointer,`voiceId`: RustBuffer.ByValue,_uniffi_out_err: RustCallStatus, 
     ): RustBuffer.ByValue
@@ -567,7 +567,7 @@ private fun uniffiCheckApiChecksums(lib: _UniFFILib) {
     if (lib.uniffi_xybrid_uniffi_checksum_method_xybridmodel_has_voices() != 11425.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_xybrid_uniffi_checksum_method_xybridmodel_run() != 58716.toShort()) {
+    if (lib.uniffi_xybrid_uniffi_checksum_method_xybridmodel_run() != 27599.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_xybrid_uniffi_checksum_method_xybridmodel_voice() != 56923.toShort()) {
@@ -973,7 +973,7 @@ public interface XybridModelInterface {
     
     fun `defaultVoiceId`(): String?
     fun `hasVoices`(): Boolean@Throws(XybridException::class)
-    suspend fun `run`(`envelope`: XybridEnvelope): XybridResult
+    suspend fun `run`(`envelope`: XybridEnvelope, `config`: XybridGenerationConfig?): XybridResult
     fun `voice`(`voiceId`: String): XybridVoiceInfo?
     fun `voices`(): List<XybridVoiceInfo>?
     companion object
@@ -1022,12 +1022,12 @@ class XybridModel(
     
     @Throws(XybridException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
-    override suspend fun `run`(`envelope`: XybridEnvelope) : XybridResult {
+    override suspend fun `run`(`envelope`: XybridEnvelope, `config`: XybridGenerationConfig?) : XybridResult {
         return uniffiRustCallAsync(
             callWithPointer { thisPtr ->
                 _UniFFILib.INSTANCE.uniffi_xybrid_uniffi_fn_method_xybridmodel_run(
                     thisPtr,
-                    FfiConverterTypeXybridEnvelope.lower(`envelope`),
+                    FfiConverterTypeXybridEnvelope.lower(`envelope`),FfiConverterOptionalTypeXybridGenerationConfig.lower(`config`),
                 )
             },
             { future, continuation -> _UniFFILib.INSTANCE.ffi_xybrid_uniffi_rust_future_poll_rust_buffer(future, continuation) },
@@ -1174,6 +1174,56 @@ public object FfiConverterTypeXybridModelLoader: FfiConverter<XybridModelLoader,
         // The Rust code always expects pointers written as 8 bytes,
         // and will fail to compile if they don't fit.
         buf.putLong(Pointer.nativeValue(lower(value)))
+    }
+}
+
+
+
+
+data class XybridGenerationConfig (
+    var `maxTokens`: UInt?, 
+    var `temperature`: Float?, 
+    var `topP`: Float?, 
+    var `minP`: Float?, 
+    var `topK`: UInt?, 
+    var `repetitionPenalty`: Float?, 
+    var `stopSequences`: List<String>?
+) {
+    
+    companion object
+}
+
+public object FfiConverterTypeXybridGenerationConfig: FfiConverterRustBuffer<XybridGenerationConfig> {
+    override fun read(buf: ByteBuffer): XybridGenerationConfig {
+        return XybridGenerationConfig(
+            FfiConverterOptionalUInt.read(buf),
+            FfiConverterOptionalFloat.read(buf),
+            FfiConverterOptionalFloat.read(buf),
+            FfiConverterOptionalFloat.read(buf),
+            FfiConverterOptionalUInt.read(buf),
+            FfiConverterOptionalFloat.read(buf),
+            FfiConverterOptionalSequenceString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: XybridGenerationConfig) = (
+            FfiConverterOptionalUInt.allocationSize(value.`maxTokens`) +
+            FfiConverterOptionalFloat.allocationSize(value.`temperature`) +
+            FfiConverterOptionalFloat.allocationSize(value.`topP`) +
+            FfiConverterOptionalFloat.allocationSize(value.`minP`) +
+            FfiConverterOptionalUInt.allocationSize(value.`topK`) +
+            FfiConverterOptionalFloat.allocationSize(value.`repetitionPenalty`) +
+            FfiConverterOptionalSequenceString.allocationSize(value.`stopSequences`)
+    )
+
+    override fun write(value: XybridGenerationConfig, buf: ByteBuffer) {
+            FfiConverterOptionalUInt.write(value.`maxTokens`, buf)
+            FfiConverterOptionalFloat.write(value.`temperature`, buf)
+            FfiConverterOptionalFloat.write(value.`topP`, buf)
+            FfiConverterOptionalFloat.write(value.`minP`, buf)
+            FfiConverterOptionalUInt.write(value.`topK`, buf)
+            FfiConverterOptionalFloat.write(value.`repetitionPenalty`, buf)
+            FfiConverterOptionalSequenceString.write(value.`stopSequences`, buf)
     }
 }
 
@@ -1654,6 +1704,64 @@ public object FfiConverterTypeXybridError : FfiConverterRustBuffer<XybridExcepti
 
 
 
+public object FfiConverterOptionalUInt: FfiConverterRustBuffer<UInt?> {
+    override fun read(buf: ByteBuffer): UInt? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterUInt.read(buf)
+    }
+
+    override fun allocationSize(value: UInt?): Int {
+        if (value == null) {
+            return 1
+        } else {
+            return 1 + FfiConverterUInt.allocationSize(value)
+        }
+    }
+
+    override fun write(value: UInt?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterUInt.write(value, buf)
+        }
+    }
+}
+
+
+
+
+public object FfiConverterOptionalFloat: FfiConverterRustBuffer<Float?> {
+    override fun read(buf: ByteBuffer): Float? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterFloat.read(buf)
+    }
+
+    override fun allocationSize(value: Float?): Int {
+        if (value == null) {
+            return 1
+        } else {
+            return 1 + FfiConverterFloat.allocationSize(value)
+        }
+    }
+
+    override fun write(value: Float?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterFloat.write(value, buf)
+        }
+    }
+}
+
+
+
+
 public object FfiConverterOptionalDouble: FfiConverterRustBuffer<Double?> {
     override fun read(buf: ByteBuffer): Double? {
         if (buf.get().toInt() == 0) {
@@ -1741,6 +1849,35 @@ public object FfiConverterOptionalByteArray: FfiConverterRustBuffer<ByteArray?> 
 
 
 
+public object FfiConverterOptionalTypeXybridGenerationConfig: FfiConverterRustBuffer<XybridGenerationConfig?> {
+    override fun read(buf: ByteBuffer): XybridGenerationConfig? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeXybridGenerationConfig.read(buf)
+    }
+
+    override fun allocationSize(value: XybridGenerationConfig?): Int {
+        if (value == null) {
+            return 1
+        } else {
+            return 1 + FfiConverterTypeXybridGenerationConfig.allocationSize(value)
+        }
+    }
+
+    override fun write(value: XybridGenerationConfig?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeXybridGenerationConfig.write(value, buf)
+        }
+    }
+}
+
+
+
+
 public object FfiConverterOptionalTypeXybridVoiceInfo: FfiConverterRustBuffer<XybridVoiceInfo?> {
     override fun read(buf: ByteBuffer): XybridVoiceInfo? {
         if (buf.get().toInt() == 0) {
@@ -1799,6 +1936,35 @@ public object FfiConverterOptionalSequenceFloat: FfiConverterRustBuffer<List<Flo
 
 
 
+public object FfiConverterOptionalSequenceString: FfiConverterRustBuffer<List<String>?> {
+    override fun read(buf: ByteBuffer): List<String>? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterSequenceString.read(buf)
+    }
+
+    override fun allocationSize(value: List<String>?): Int {
+        if (value == null) {
+            return 1
+        } else {
+            return 1 + FfiConverterSequenceString.allocationSize(value)
+        }
+    }
+
+    override fun write(value: List<String>?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterSequenceString.write(value, buf)
+        }
+    }
+}
+
+
+
+
 public object FfiConverterOptionalSequenceTypeXybridVoiceInfo: FfiConverterRustBuffer<List<XybridVoiceInfo>?> {
     override fun read(buf: ByteBuffer): List<XybridVoiceInfo>? {
         if (buf.get().toInt() == 0) {
@@ -1846,6 +2012,31 @@ public object FfiConverterSequenceFloat: FfiConverterRustBuffer<List<Float>> {
         buf.putInt(value.size)
         value.forEach {
             FfiConverterFloat.write(it, buf)
+        }
+    }
+}
+
+
+
+
+public object FfiConverterSequenceString: FfiConverterRustBuffer<List<String>> {
+    override fun read(buf: ByteBuffer): List<String> {
+        val len = buf.getInt()
+        return List<String>(len) {
+            FfiConverterString.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<String>): Int {
+        val sizeForLength = 4
+        val sizeForItems = value.map { FfiConverterString.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<String>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.forEach {
+            FfiConverterString.write(it, buf)
         }
     }
 }
