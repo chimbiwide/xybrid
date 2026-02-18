@@ -84,7 +84,7 @@ pub struct LlmGenerationParams {
 impl Default for LlmGenerationParams {
     fn default() -> Self {
         Self {
-            max_tokens: 256,
+            max_tokens: 2048,
             temperature: 0.7,
             top_p: 0.9,
             top_k: 40,
@@ -672,7 +672,7 @@ mod tests {
     fn test_generation_params_default() {
         let params = LlmGenerationParams::default();
 
-        assert_eq!(params.max_tokens, 256);
+        assert_eq!(params.max_tokens, 2048);
         assert!((params.temperature - 0.7).abs() < 0.001);
         assert!((params.top_p - 0.9).abs() < 0.001);
         assert_eq!(params.top_k, 40);
@@ -866,7 +866,7 @@ mod tests {
         let params = LlmGenerationParams::from_envelope_metadata(&metadata);
 
         // Defaults should be used when parsing fails
-        assert_eq!(params.max_tokens, 256);
+        assert_eq!(params.max_tokens, 2048);
         assert!((params.temperature - 0.7).abs() < 0.001);
     }
 

@@ -125,7 +125,7 @@ impl ChatMessage {
 /// Generation parameters for LLM inference.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GenerationConfig {
-    /// Maximum tokens to generate. Default: 256
+    /// Maximum tokens to generate. Default: 2048
     #[serde(default = "default_max_tokens")]
     pub max_tokens: usize,
 
@@ -160,7 +160,7 @@ pub struct GenerationConfig {
 }
 
 fn default_max_tokens() -> usize {
-    256
+    2048
 }
 
 fn default_temperature() -> f32 {
@@ -457,7 +457,7 @@ mod tests {
     #[test]
     fn test_generation_config_defaults() {
         let config = GenerationConfig::default();
-        assert_eq!(config.max_tokens, 256);
+        assert_eq!(config.max_tokens, 2048);
         assert!((config.temperature - 0.7).abs() < f32::EPSILON);
         assert!((config.top_p - 0.9).abs() < f32::EPSILON);
         assert!((config.min_p - 0.05).abs() < f32::EPSILON);
