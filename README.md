@@ -14,6 +14,7 @@
   <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=flat-square" alt="License"></a>
   <a href="https://github.com/xybrid-ai/xybrid/actions"><img src="https://img.shields.io/github/actions/workflow/status/xybrid-ai/xybrid/ci.yml?branch=master&style=flat-square" alt="Build Status"></a>
   <a href="https://github.com/xybrid-ai/xybrid/stargazers"><img src="https://img.shields.io/github/stars/xybrid-ai/xybrid?style=flat-square" alt="Stars"></a>
+  <a href="https://pub.dev/packages/xybrid_flutter"><img src="https://img.shields.io/pub/v/xybrid_flutter?style=flat-square&label=pub.dev" alt="pub.dev"></a>
   <a href="https://central.sonatype.com/artifact/ai.xybrid/xybrid-kotlin"><img src="https://img.shields.io/maven-central/v/ai.xybrid/xybrid-kotlin?style=flat-square&label=Maven%20Central" alt="Maven Central"></a>
   <a href="https://discord.gg/cgd3tbFPWx"><img src="https://img.shields.io/discord/1451959487811420282?label=Discord&style=flat-square&color=5865F2" alt="Discord"></a>
 </p>
@@ -22,7 +23,7 @@
   <a href="https://docs.xybrid.dev">Documentation</a> ·
   <a href="#sdks">SDKs</a> ·
   <a href="#supported-models">Models</a> ·
-  <a href="https://discord.gg/cgd3tbFPWx">Discord</a> ·
+  <a href="https://discord.gg/cgd3tbFPWx">Join Discord</a> ·
   <a href="https://github.com/xybrid-ai/xybrid/issues">Issues</a>
 </p>
 
@@ -34,7 +35,7 @@ Xybrid is a **Rust-powered runtime** with native bindings for every major platfo
 
 | SDK | Platforms | Install | Status | Sample |
 |-----|-----------|---------|--------|--------|
-| **[Flutter](bindings/flutter/)** | iOS, Android, macOS, Linux, Windows | [See below](#install) | Available | [README](examples/flutter/README.md) |
+| **[Flutter](bindings/flutter/)** | iOS, Android, macOS, Linux, Windows | [pub.dev](https://pub.dev/packages/xybrid_flutter) | Available | [README](examples/flutter/README.md) |
 | **[Unity](bindings/unity/)** | macOS, Windows, Linux | [See below](#install) | Available | [Unity 3D AI tavern](https://github.com/xybrid-ai/xybrid-unity-tavern) |
 | **[Swift](bindings/apple/)** | iOS, macOS | Swift Package Manager | Coming Soon | [README](examples/ios/README.md) |
 | **[Kotlin](bindings/kotlin/)** | Android | Maven Central | Available | [README](examples/android/README.md) |
