@@ -589,7 +589,7 @@ impl StreamSession {
         // Execute through TemplateExecutor (handles ONNX, Candle, etc.)
         let output = self
             .executor
-            .execute(&self.metadata, &envelope)
+            .execute(&self.metadata, &envelope, None)
             .map_err(|e| StreamError::InferenceError(format!("Execution failed: {}", e)))?;
 
         // Extract text from output

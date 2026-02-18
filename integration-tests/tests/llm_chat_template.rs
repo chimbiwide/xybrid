@@ -245,7 +245,7 @@ fn test_gemma_executor_output_clean() {
     };
 
     let output = executor
-        .execute(&metadata, &input)
+        .execute(&metadata, &input, None)
         .expect("LLM inference failed");
 
     let response = match &output.kind {

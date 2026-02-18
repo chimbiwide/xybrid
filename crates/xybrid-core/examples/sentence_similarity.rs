@@ -34,7 +34,7 @@ fn encode_sentence(
         metadata: envelope_metadata,
     };
 
-    let output_envelope = executor.execute(metadata, &input_envelope)?;
+    let output_envelope = executor.execute(metadata, &input_envelope, None)?;
 
     match &output_envelope.kind {
         EnvelopeKind::Embedding(embedding) => Ok(embedding.clone()),

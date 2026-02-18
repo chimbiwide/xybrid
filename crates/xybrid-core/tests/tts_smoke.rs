@@ -127,7 +127,7 @@ fn test_all_tts_models_produce_audio() {
         };
 
         // Execute
-        match executor.execute(&metadata, &input) {
+        match executor.execute(&metadata, &input, None) {
             Ok(output) => match &output.kind {
                 EnvelopeKind::Audio(bytes) => {
                     assert!(

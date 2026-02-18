@@ -58,7 +58,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         xybrid_core::execution::TemplateExecutor::with_base_path(model_dir.to_str().unwrap());
 
     let start = std::time::Instant::now();
-    let output = executor.execute(&metadata, &input)?;
+    let output = executor.execute(&metadata, &input, None)?;
     let elapsed = start.elapsed();
 
     // 5. Print result

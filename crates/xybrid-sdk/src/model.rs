@@ -21,6 +21,7 @@ use xybrid_core::execution::{
     ExecutionTemplate, ModelMetadata, TemplateExecutor, VoiceConfig, VoiceInfo,
 };
 use xybrid_core::ir::Envelope;
+use xybrid_core::runtime_adapter::types::GenerationConfig;
 use xybrid_core::streaming::{StreamConfig as CoreStreamConfig, VadStreamConfig as CoreVadConfig};
 
 /// A token generated during streaming inference.
@@ -766,7 +767,7 @@ impl XybridModel {
 
         // Run inference (this loads the model)
         let start = Instant::now();
-        let _ = self.run(&warmup_input)?;
+        let _ = self.run(&warmup_input, None)?;
         let elapsed = start.elapsed();
 
         log::info!(
@@ -840,7 +841,7 @@ impl XybridModel {
             let metadata = guard.metadata.clone();
             let _ = guard
                 .executor
-                .execute(&metadata, &warmup_input)
+                .execute(&metadata, &warmup_input, None)
                 .map_err(|e| SdkError::InferenceError(format!("Warmup failed: {}", e)))?;
 
             let elapsed = start.elapsed();
@@ -898,7 +899,11 @@ impl XybridModel {
     /// # Returns
     ///
     /// `InferenceResult` containing the output with convenient accessors.
-    pub fn run(&self, envelope: &Envelope) -> SdkResult<InferenceResult> {
+    pub fn run(
+        &self,
+        envelope: &Envelope,
+        config: Option<&GenerationConfig>,
+    ) -> SdkResult<InferenceResult> {
         let start = Instant::now();
 
         // Recover from poisoned RwLock to prevent permanent lock errors
@@ -912,7 +917,7 @@ impl XybridModel {
         let metadata = handle.metadata.clone();
         let output = handle
             .executor
-            .execute(&metadata, envelope)
+            .execute(&metadata, envelope, config)
             .map_err(|e| SdkError::InferenceError(format!("Execution failed: {}", e)))?;
 
         let latency_ms = start.elapsed().as_millis() as u32;
@@ -985,6 +990,7 @@ impl XybridModel {
         &self,
         envelope: &Envelope,
         context: &ConversationContext,
+        config: Option<&GenerationConfig>,
     ) -> SdkResult<InferenceResult> {
         let start = Instant::now();
 
@@ -999,7 +1005,7 @@ impl XybridModel {
         let metadata = handle.metadata.clone();
         let output = handle
             .executor
-            .execute_with_context(&metadata, envelope, context)
+            .execute_with_context(&metadata, envelope, context, config)
             .map_err(|e| SdkError::InferenceError(format!("Execution failed: {}", e)))?;
 
         let latency_ms = start.elapsed().as_millis() as u32;
@@ -1068,6 +1074,7 @@ impl XybridModel {
         &self,
         envelope: &Envelope,
         context: &ConversationContext,
+        config: Option<&GenerationConfig>,
         mut on_token: F,
     ) -> SdkResult<InferenceResult>
     where
@@ -1103,6 +1110,7 @@ impl XybridModel {
                     envelope,
                     context,
                     Box::new(&mut on_token),
+                    config,
                 )
                 .map_err(|e| {
                     SdkError::InferenceError(format!("Streaming execution failed: {}", e))
@@ -1111,7 +1119,7 @@ impl XybridModel {
             // For non-LLM models: run with context and emit single "token" with full result
             let result = handle
                 .executor
-                .execute_with_context(&metadata, envelope, context)
+                .execute_with_context(&metadata, envelope, context, config)
                 .map_err(|e| SdkError::InferenceError(format!("Execution failed: {}", e)))?;
 
             // Extract text from result (if any) and emit as single token
@@ -1190,6 +1198,7 @@ impl XybridModel {
     pub fn run_streaming<F>(
         &self,
         envelope: &Envelope,
+        config: Option<&GenerationConfig>,
         mut on_token: F,
     ) -> SdkResult<InferenceResult>
     where
@@ -1220,7 +1229,7 @@ impl XybridModel {
             // True streaming for LLM models
             handle
                 .executor
-                .execute_streaming(&metadata, envelope, Box::new(&mut on_token))
+                .execute_streaming(&metadata, envelope, Box::new(&mut on_token), config)
                 .map_err(|e| {
                     SdkError::InferenceError(format!("Streaming execution failed: {}", e))
                 })?
@@ -1228,7 +1237,7 @@ impl XybridModel {
             // For non-LLM models: run batch and emit single "token" with full result
             let result = handle
                 .executor
-                .execute(&metadata, envelope)
+                .execute(&metadata, envelope, config)
                 .map_err(|e| SdkError::InferenceError(format!("Execution failed: {}", e)))?;
 
             // Extract text from result (if any) and emit as single token
@@ -1302,6 +1311,7 @@ impl XybridModel {
     pub fn run_stream(
         &self,
         envelope: Envelope,
+        config: Option<GenerationConfig>,
     ) -> Pin<Box<dyn tokio_stream::Stream<Item = StreamEvent> + Send + '_>> {
         use tokio::sync::mpsc;
         use xybrid_core::runtime_adapter::types::PartialToken;
@@ -1356,15 +1366,19 @@ impl XybridModel {
                                     tx_for_callback.blocking_send(StreamEvent::Token(stream_token));
                                 Ok(())
                             }),
+                            config.as_ref(),
                         )
                         .map_err(|e| {
                             SdkError::InferenceError(format!("Streaming execution failed: {}", e))
                         })?
                 } else {
                     // Non-LLM: batch execution, emit single token
-                    let result = guard.executor.execute(&metadata, &envelope).map_err(|e| {
-                        SdkError::InferenceError(format!("Execution failed: {}", e))
-                    })?;
+                    let result = guard
+                        .executor
+                        .execute(&metadata, &envelope, config.as_ref())
+                        .map_err(|e| {
+                            SdkError::InferenceError(format!("Execution failed: {}", e))
+                        })?;
 
                     // Emit single token with full result
                     if let xybrid_core::ir::EnvelopeKind::Text(text) = &result.kind {
@@ -1480,7 +1494,7 @@ impl XybridModel {
             let metadata = guard.metadata.clone();
             let output = guard
                 .executor
-                .execute(&metadata, &envelope)
+                .execute(&metadata, &envelope, None)
                 .map_err(|e| SdkError::InferenceError(format!("Execution failed: {}", e)))?;
 
             let latency_ms = start.elapsed().as_millis() as u32;

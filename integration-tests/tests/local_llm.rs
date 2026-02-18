@@ -55,7 +55,7 @@ fn test_local_llm_inference() {
 
     // Execute
     let output = executor
-        .execute(&metadata, &input)
+        .execute(&metadata, &input, None)
         .expect("LLM inference failed");
 
     // Verify output
@@ -114,7 +114,7 @@ fn test_local_llm_with_system_prompt() {
     };
 
     let output = executor
-        .execute(&metadata, &input)
+        .execute(&metadata, &input, None)
         .expect("LLM inference failed");
 
     match &output.kind {

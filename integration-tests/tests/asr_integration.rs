@@ -154,7 +154,7 @@ fn test_wav2vec2_inference_with_audio() {
 
     // Execute inference
     let output_envelope = executor
-        .execute(&metadata, &input_envelope)
+        .execute(&metadata, &input_envelope, None)
         .expect("Inference should succeed");
 
     // Verify output is text

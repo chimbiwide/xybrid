@@ -491,7 +491,7 @@ impl Executor {
                             .expect("TemplateExecutor was just inserted");
 
                         let output = template_executor
-                            .execute(&model_metadata, input)
+                            .execute(&model_metadata, input, None)
                             .map_err(ExecutorError::AdapterError)?;
 
                         let latency_ms = start_time.elapsed().as_millis();

@@ -114,6 +114,7 @@ fn run_with_model_dir(model_dir: &std::path::Path) -> Result<(), Box<dyn std::er
 
             Ok(())
         }),
+        None,
     )?;
 
     let elapsed = start.elapsed();

@@ -1193,7 +1193,7 @@ impl Xybrid {
 
                         let start_time = std::time::Instant::now();
                         let output = executor
-                            .execute_streaming(&metadata, envelope, on_token)
+                            .execute_streaming(&metadata, envelope, on_token, None)
                             .map_err(|e| SdkError::InferenceError(format!("{}", e)))?;
                         let total_latency_ms = start_time.elapsed().as_millis() as u32;
 

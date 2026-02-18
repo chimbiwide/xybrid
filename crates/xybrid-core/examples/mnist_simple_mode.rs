@@ -92,7 +92,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("   → Postprocessing: Softmax");
     println!();
 
-    let output_envelope = executor.execute(&metadata, &input_envelope)?;
+    let output_envelope = executor.execute(&metadata, &input_envelope, None)?;
 
     println!("✅ Inference complete!");
     println!();

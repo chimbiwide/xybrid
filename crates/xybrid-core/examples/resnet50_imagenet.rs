@@ -95,7 +95,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("      2. TopK (top 5 predictions)");
     println!();
 
-    let output_envelope = executor.execute(&metadata, &input_envelope)?;
+    let output_envelope = executor.execute(&metadata, &input_envelope, None)?;
 
     println!("✅ Inference complete!");
     println!();

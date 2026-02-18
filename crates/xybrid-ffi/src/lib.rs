@@ -1742,7 +1742,7 @@ pub unsafe extern "C" fn xybrid_model_run(
         let sdk_envelope = envelope_data_to_sdk(envelope_data);
 
         // Run inference using the SDK
-        let inference_result = match model_state.model.run(&sdk_envelope) {
+        let inference_result = match model_state.model.run(&sdk_envelope, None) {
             Ok(result) => result,
             Err(e) => {
                 // Return error result
@@ -1880,25 +1880,26 @@ pub unsafe extern "C" fn xybrid_model_run_with_context(
         let sdk_envelope = envelope_data_to_sdk(envelope_data);
 
         // Run inference with context using the SDK
-        let inference_result = match model_state
-            .model
-            .run_with_context(&sdk_envelope, &ctx_data.context)
-        {
-            Ok(result) => result,
-            Err(e) => {
-                // Return error result
-                let result = ResultData {
-                    success: false,
-                    error: Some(format!("Inference failed: {}", e)),
-                    output_type: "".to_string(),
-                    text: None,
-                    embedding: None,
-                    audio_bytes: None,
-                    latency_ms: 0,
-                };
-                return XybridResultHandle::from_boxed(Box::new(result));
-            }
-        };
+        let inference_result =
+            match model_state
+                .model
+                .run_with_context(&sdk_envelope, &ctx_data.context, None)
+            {
+                Ok(result) => result,
+                Err(e) => {
+                    // Return error result
+                    let result = ResultData {
+                        success: false,
+                        error: Some(format!("Inference failed: {}", e)),
+                        output_type: "".to_string(),
+                        text: None,
+                        embedding: None,
+                        audio_bytes: None,
+                        latency_ms: 0,
+                    };
+                    return XybridResultHandle::from_boxed(Box::new(result));
+                }
+            };
 
         // Convert InferenceResult to ResultData
         XybridResultHandle::from_boxed(Box::new(inference_result_to_data(&inference_result)))
@@ -2305,7 +2306,10 @@ pub unsafe extern "C" fn xybrid_model_run_streaming(
             };
 
         // Call the SDK streaming method
-        match model_state.model.run_streaming(&sdk_envelope, on_token) {
+        match model_state
+            .model
+            .run_streaming(&sdk_envelope, None, on_token)
+        {
             Ok(result) => {
                 XybridResultHandle::from_boxed(Box::new(inference_result_to_data(&result)))
             }
@@ -2450,6 +2454,7 @@ pub unsafe extern "C" fn xybrid_model_run_streaming_with_context(
         match model_state.model.run_streaming_with_context(
             &sdk_envelope,
             &ctx_data.context,
+            None,
             on_token,
         ) {
             Ok(result) => {

@@ -99,7 +99,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             publish_telemetry_event(start_event);
 
             let start = std::time::Instant::now();
-            match executor.execute(&metadata, &input) {
+            match executor.execute(&metadata, &input, None) {
                 Ok(output) => {
                     let latency = start.elapsed().as_millis() as u32;
                     println!("TTS completed in {}ms", latency);

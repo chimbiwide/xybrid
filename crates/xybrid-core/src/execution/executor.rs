@@ -39,15 +39,13 @@ use crate::runtime_adapter::onnx::{ONNXSession, OnnxRuntime};
 use crate::runtime_adapter::candle::CandleRuntime;
 
 // Always-available LLM types (defined in runtime_adapter/types.rs)
-use crate::runtime_adapter::types::StreamingCallback;
 #[cfg(any(feature = "llm-mistral", feature = "llm-llamacpp"))]
-use crate::runtime_adapter::types::{ChatMessage, GenerationConfig, LlmConfig};
+use crate::runtime_adapter::types::{ChatMessage, LlmConfig};
+use crate::runtime_adapter::types::{GenerationConfig, StreamingCallback};
 
 // LLM adapter implementation (only available with LLM features)
 #[cfg(any(feature = "llm-mistral", feature = "llm-llamacpp"))]
 use crate::runtime_adapter::llm::LlmRuntimeAdapter;
-#[cfg(any(feature = "llm-mistral", feature = "llm-llamacpp"))]
-use crate::runtime_adapter::RuntimeAdapter;
 
 use super::modes::{
     execute_autoregressive_stage, execute_bert_inference, execute_single_shot_stage,
@@ -187,6 +185,7 @@ impl TemplateExecutor {
         &mut self,
         metadata: &ModelMetadata,
         input: &Envelope,
+        #[allow(unused_variables)] config: Option<&GenerationConfig>,
     ) -> ExecutorResult<Envelope> {
         debug!(
             target: "xybrid_core",
@@ -267,6 +266,7 @@ impl TemplateExecutor {
                     *context_length,
                     input,
                     backend_hint,
+                    config,
                 );
             }
             #[cfg(not(any(feature = "llm-mistral", feature = "llm-llamacpp")))]
@@ -425,6 +425,7 @@ impl TemplateExecutor {
         metadata: &ModelMetadata,
         input: &Envelope,
         context: &ConversationContext,
+        config: Option<&GenerationConfig>,
     ) -> ExecutorResult<Envelope> {
         debug!(
             target: "xybrid_core",
@@ -499,6 +500,7 @@ impl TemplateExecutor {
                 *context_length,
                 &chat_messages,
                 backend_hint,
+                config,
             )?;
 
             // Tag the result as an assistant message
@@ -512,7 +514,7 @@ impl TemplateExecutor {
             target: "xybrid_core",
             "Non-LLM model, executing without context transformation"
         );
-        let mut result = self.execute(metadata, input)?;
+        let mut result = self.execute(metadata, input, config)?;
 
         // Tag the result as an assistant message
         result = result.with_role(MessageRole::Assistant);
@@ -551,6 +553,7 @@ impl TemplateExecutor {
         metadata: &ModelMetadata,
         input: &Envelope,
         #[allow(unused_variables)] on_token: StreamingCallback<'_>,
+        #[allow(unused_variables)] config: Option<&GenerationConfig>,
     ) -> ExecutorResult<Envelope> {
         #[cfg(any(feature = "llm-mistral", feature = "llm-llamacpp"))]
         {
@@ -570,6 +573,7 @@ impl TemplateExecutor {
                     input,
                     backend_hint,
                     on_token,
+                    config,
                 );
             }
 
@@ -588,7 +592,7 @@ impl TemplateExecutor {
             );
         }
 
-        self.execute(metadata, input)
+        self.execute(metadata, input, config)
     }
 
     /// Execute a model with streaming and conversation context.
@@ -628,6 +632,7 @@ impl TemplateExecutor {
         input: &Envelope,
         context: &ConversationContext,
         on_token: StreamingCallback<'_>,
+        config: Option<&GenerationConfig>,
     ) -> ExecutorResult<Envelope> {
         debug!(
             target: "xybrid_core",
@@ -702,6 +707,7 @@ impl TemplateExecutor {
                     &chat_messages,
                     backend_hint,
                     on_token,
+                    config,
                 )?;
 
                 // Tag the result as an assistant message
@@ -715,7 +721,7 @@ impl TemplateExecutor {
                 target: "xybrid_core",
                 "Non-LLM model, executing streaming without context transformation"
             );
-            let mut result = self.execute_streaming(metadata, input, on_token)?;
+            let mut result = self.execute_streaming(metadata, input, on_token, config)?;
             result = result.with_role(MessageRole::Assistant);
 
             Ok(result)
@@ -728,7 +734,7 @@ impl TemplateExecutor {
                 "execute_streaming_with_context: LLM features not enabled, using execute_with_context()"
             );
             // No LLM support - just use regular execution with context
-            self.execute_with_context(metadata, input, context)
+            self.execute_with_context(metadata, input, context, config)
         }
     }
 
@@ -742,6 +748,7 @@ impl TemplateExecutor {
         input: &Envelope,
         backend_hint: Option<&str>,
         on_token: StreamingCallback<'_>,
+        config: Option<&GenerationConfig>,
     ) -> ExecutorResult<Envelope> {
         // ChatMessage, GenerationConfig, LlmConfig are imported at module level from types
 
@@ -799,22 +806,27 @@ impl TemplateExecutor {
         }
         messages.push(ChatMessage::user(&prompt));
 
-        // Parse generation config from metadata
-        let mut gen_config = GenerationConfig::default();
-        if let Some(max_tokens) = input
-            .metadata
-            .get("max_tokens")
-            .and_then(|s| s.parse().ok())
-        {
-            gen_config.max_tokens = max_tokens;
-        }
-        if let Some(temperature) = input
-            .metadata
-            .get("temperature")
-            .and_then(|s| s.parse().ok())
-        {
-            gen_config.temperature = temperature;
-        }
+        // Build generation config: explicit config wins, then envelope metadata, then defaults
+        let gen_config = if let Some(cfg) = config {
+            cfg.clone()
+        } else {
+            let mut cfg = GenerationConfig::default();
+            if let Some(max_tokens) = input
+                .metadata
+                .get("max_tokens")
+                .and_then(|s| s.parse().ok())
+            {
+                cfg.max_tokens = max_tokens;
+            }
+            if let Some(temperature) = input
+                .metadata
+                .get("temperature")
+                .and_then(|s| s.parse().ok())
+            {
+                cfg.temperature = temperature;
+            }
+            cfg
+        };
 
         // Execute with streaming
         let output = if let Some((_, adapter)) = &self.llm_adapter_cache {
@@ -864,6 +876,7 @@ impl TemplateExecutor {
         context_length: usize,
         messages: &[ChatMessage],
         backend_hint: Option<&str>,
+        config: Option<&GenerationConfig>,
     ) -> ExecutorResult<Envelope> {
         info!(
             target: "xybrid_core",
@@ -896,8 +909,8 @@ impl TemplateExecutor {
             self.llm_adapter_cache = Some((model_path_str.clone(), adapter));
         }
 
-        // Use default generation config
-        let gen_config = GenerationConfig::default();
+        // Use explicit config or fall back to defaults
+        let gen_config = config.cloned().unwrap_or_default();
 
         // Execute with ChatMessages directly — backend applies template once
         let output = if let Some((_, adapter)) = &self.llm_adapter_cache {
@@ -946,6 +959,7 @@ impl TemplateExecutor {
         messages: &[ChatMessage],
         backend_hint: Option<&str>,
         on_token: StreamingCallback<'_>,
+        config: Option<&GenerationConfig>,
     ) -> ExecutorResult<Envelope> {
         // GenerationConfig, LlmConfig are imported at module level from types
 
@@ -980,8 +994,8 @@ impl TemplateExecutor {
             self.llm_adapter_cache = Some((model_path_str.clone(), adapter));
         }
 
-        // Use default generation config
-        let gen_config = GenerationConfig::default();
+        // Use explicit config or fall back to defaults
+        let gen_config = config.cloned().unwrap_or_default();
 
         // Execute with streaming - pass ChatMessages directly to backend
         let output = if let Some((_, adapter)) = &self.llm_adapter_cache {
@@ -1032,6 +1046,7 @@ impl TemplateExecutor {
         context_length: usize,
         input: &Envelope,
         backend_hint: Option<&str>,
+        config: Option<&GenerationConfig>,
     ) -> ExecutorResult<Envelope> {
         info!(
             target: "xybrid_core",
@@ -1090,11 +1105,49 @@ impl TemplateExecutor {
             self.llm_adapter_cache = Some((model_path_str.clone(), adapter));
         }
 
-        // Execute inference using cached adapter
-        let result = if let Some((_, adapter)) = &self.llm_adapter_cache {
-            adapter.execute(input)?
+        // Build generation config: explicit config wins, then envelope metadata, then defaults
+        let gen_config = if let Some(cfg) = config {
+            cfg.clone()
         } else {
-            // This should never happen, but handle gracefully
+            let mut cfg = GenerationConfig::default();
+            if let Some(max_tokens) = input
+                .metadata
+                .get("max_tokens")
+                .and_then(|s| s.parse().ok())
+            {
+                cfg.max_tokens = max_tokens;
+            }
+            if let Some(temperature) = input
+                .metadata
+                .get("temperature")
+                .and_then(|s| s.parse().ok())
+            {
+                cfg.temperature = temperature;
+            }
+            cfg
+        };
+
+        // Build messages from input
+        let prompt = match &input.kind {
+            EnvelopeKind::Text(text) => text.clone(),
+            _ => {
+                return Err(AdapterError::InvalidInput(
+                    "LLM requires text input".to_string(),
+                ))
+            }
+        };
+
+        let system_prompt = input.metadata.get("system_prompt").map(|s| s.as_str());
+        let mut messages = Vec::new();
+        if let Some(sys) = system_prompt {
+            messages.push(ChatMessage::system(sys));
+        }
+        messages.push(ChatMessage::user(&prompt));
+
+        // Execute inference using cached adapter's backend directly
+        let output = if let Some((_, adapter)) = &self.llm_adapter_cache {
+            adapter.backend().generate(&messages, &gen_config)?
+        } else {
             return Err(AdapterError::RuntimeError(
                 "LLM adapter cache unexpectedly empty".to_string(),
             ));
@@ -1105,7 +1158,26 @@ impl TemplateExecutor {
             "LLM inference complete"
         );
 
-        Ok(result)
+        // Build response envelope
+        let mut response_metadata = std::collections::HashMap::new();
+        response_metadata.insert(
+            "tokens_generated".to_string(),
+            output.tokens_generated.to_string(),
+        );
+        response_metadata.insert(
+            "generation_time_ms".to_string(),
+            output.generation_time_ms.to_string(),
+        );
+        response_metadata.insert(
+            "tokens_per_second".to_string(),
+            format!("{:.2}", output.tokens_per_second),
+        );
+        response_metadata.insert("finish_reason".to_string(), output.finish_reason);
+
+        Ok(Envelope {
+            kind: EnvelopeKind::Text(output.text),
+            metadata: response_metadata,
+        })
     }
 
     /// Run preprocessing steps from metadata.

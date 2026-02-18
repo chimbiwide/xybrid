@@ -136,8 +136,10 @@ pub use xybrid_core::orchestrator::routing_engine;
 // Re-export voice types for TTS model discovery
 pub use xybrid_core::execution::{VoiceConfig, VoiceInfo};
 
-// Re-export streaming types for LLM token streaming (always available for FFI/bindings)
-pub use xybrid_core::runtime_adapter::types::{PartialToken, StreamingCallback, StreamingError};
+// Re-export streaming and generation types for LLM inference (always available for FFI/bindings)
+pub use xybrid_core::runtime_adapter::types::{
+    GenerationConfig, PartialToken, StreamingCallback, StreamingError,
+};
 
 // Backwards compatibility re-exports
 #[doc(hidden)]

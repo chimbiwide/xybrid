@@ -2339,7 +2339,7 @@ fn run_bundle(
 
     let start_time = std::time::Instant::now();
     let output = executor
-        .execute(&metadata, &input)
+        .execute(&metadata, &input, None)
         .map_err(|e| anyhow::anyhow!("Inference failed: {:?}", e))?;
     let elapsed = start_time.elapsed();
 
@@ -2672,7 +2672,7 @@ fn run_model(
 
     let start_time = std::time::Instant::now();
     let output = executor
-        .execute(&metadata, &input)
+        .execute(&metadata, &input, None)
         .map_err(|e| anyhow::anyhow!("Inference failed: {:?}", e))?;
     let elapsed = start_time.elapsed();
 

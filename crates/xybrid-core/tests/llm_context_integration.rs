@@ -58,7 +58,7 @@ fn test_execute_with_context_no_crash() {
     .with_role(MessageRole::User);
 
     // This previously crashed with SIGSEGV or heap corruption
-    let result = executor.execute_with_context(&metadata, &input, &ctx);
+    let result = executor.execute_with_context(&metadata, &input, &ctx, None);
 
     assert!(
         result.is_ok(),
@@ -123,7 +123,7 @@ fn test_execute_with_context_multi_turn_no_crash() {
     let input =
         Envelope::new(EnvelopeKind::Text("And 3+3?".to_string())).with_role(MessageRole::User);
 
-    let result = executor.execute_with_context(&metadata, &input, &ctx);
+    let result = executor.execute_with_context(&metadata, &input, &ctx, None);
 
     assert!(
         result.is_ok(),
@@ -173,6 +173,7 @@ fn test_execute_streaming_with_context_no_crash() {
             tokens_received += 1;
             Ok(())
         }),
+        None,
     );
 
     assert!(
@@ -248,7 +249,7 @@ fn test_oversized_prompt_returns_error_not_crash() {
     .with_role(MessageRole::User);
 
     // This previously caused SIGSEGV — now it should return a clean error
-    let result = executor.execute_with_context(&metadata, &input, &ctx);
+    let result = executor.execute_with_context(&metadata, &input, &ctx, None);
 
     assert!(
         result.is_err(),
@@ -319,7 +320,7 @@ fn test_moderate_prompt_over_512_tokens_works() {
     .with_role(MessageRole::User);
 
     // This previously crashed when input > 512 tokens due to batch overflow
-    let result = executor.execute_with_context(&metadata, &input, &ctx);
+    let result = executor.execute_with_context(&metadata, &input, &ctx, None);
 
     assert!(
         result.is_ok(),

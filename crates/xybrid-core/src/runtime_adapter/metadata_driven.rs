@@ -120,7 +120,7 @@ impl MetadataDrivenAdapter {
             )
         })?;
 
-        self.executor.execute(metadata, input)
+        self.executor.execute(metadata, input, None)
     }
 
     /// Get the currently loaded metadata (if any)

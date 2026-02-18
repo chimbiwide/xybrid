@@ -268,7 +268,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("🔄 Running TTS pipeline...");
     let start = std::time::Instant::now();
-    let output_envelope = executor.execute(&metadata, &input_envelope)?;
+    let output_envelope = executor.execute(&metadata, &input_envelope, None)?;
     let elapsed = start.elapsed();
 
     // Parse output

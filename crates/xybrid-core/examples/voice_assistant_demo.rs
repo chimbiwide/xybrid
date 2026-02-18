@@ -159,7 +159,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             let mut executor = TemplateExecutor::with_base_path(asr_model_dir.to_str().unwrap());
-            let output = executor.execute(&metadata, &input_envelope)?;
+            let output = executor.execute(&metadata, &input_envelope, None)?;
 
             latency.asr_latency = Some(asr_start.elapsed());
             println!(
@@ -315,7 +315,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Execute TTS through TemplateExecutor (same pattern as ASR)
     let mut tts_executor = TemplateExecutor::with_base_path(tts_model_dir.to_str().unwrap());
-    let tts_output = tts_executor.execute(&tts_metadata, &tts_input)?;
+    let tts_output = tts_executor.execute(&tts_metadata, &tts_input, None)?;
 
     latency.tts_latency = Some(tts_start.elapsed());
 

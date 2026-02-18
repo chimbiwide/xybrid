@@ -131,7 +131,7 @@ impl FfiModel {
     pub fn run(&self, envelope: super::envelope::FfiEnvelope) -> Result<FfiResult, String> {
         let result = self
             .0
-            .run(&envelope.into_envelope())
+            .run(&envelope.into_envelope(), None)
             .map_err(|e| e.to_string())?;
         Ok(FfiResult::from_inference_result(&result))
     }
@@ -172,7 +172,7 @@ impl FfiModel {
             };
 
             rt.block_on(async move {
-                let mut stream = model.run_stream(env);
+                let mut stream = model.run_stream(env, None);
 
                 while let Some(event) = stream.next().await {
                     let ffi_event = FfiStreamEvent::from(event);
@@ -213,7 +213,7 @@ impl FfiModel {
 
         let result = self
             .0
-            .run_with_context(&envelope.into_envelope(), &ctx_guard)
+            .run_with_context(&envelope.into_envelope(), &ctx_guard, None)
             .map_err(|e| e.to_string())?;
 
         Ok(FfiResult::from_inference_result(&result))
@@ -256,7 +256,7 @@ impl FfiModel {
             let mut token_index = 0u32;
 
             // Use callback-based streaming
-            let result = model.run_streaming_with_context(&env, &ctx_guard, |token| {
+            let result = model.run_streaming_with_context(&env, &ctx_guard, None, |token| {
                 let ffi_token = FfiStreamToken {
                     token: token.token.clone(),
                     token_id: token.token_id,

@@ -67,7 +67,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!();
 
     // Execute inference
-    let output_envelope = executor.execute(&metadata, &input_envelope)?;
+    let output_envelope = executor.execute(&metadata, &input_envelope, None)?;
 
     // Parse output
     match &output_envelope.kind {

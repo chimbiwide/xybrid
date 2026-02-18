@@ -71,7 +71,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!();
 
     let start = std::time::Instant::now();
-    let output_envelope = executor.execute(&metadata, &input_envelope)?;
+    let output_envelope = executor.execute(&metadata, &input_envelope, None)?;
     let elapsed = start.elapsed();
 
     println!("✅ Inference complete! ({:.2}s)", elapsed.as_secs_f32());
