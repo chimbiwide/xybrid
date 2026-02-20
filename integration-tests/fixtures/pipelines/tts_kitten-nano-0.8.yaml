@@ -1,0 +1,5 @@
+# TTS Pipeline - Minimal Format
+# Only `stages` is required. Everything else is optional or inferred.
+
+stages:
+  - kitten-tts-micro-0.8
