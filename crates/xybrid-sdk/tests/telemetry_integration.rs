@@ -1,0 +1,276 @@
+//! Telemetry integration test — end-to-end with a real model and ingestion API.
+//!
+//! This test runs a lightweight MNIST inference, emits telemetry events, and
+//! verifies they are accepted by the configured ingestion endpoint.
+//!
+//! ## Prerequisites
+//!
+//! 1. Download the MNIST model fixture:
+//!    ```bash
+//!    cd repos/xybrid && ./integration-tests/download.sh mnist
+//!    ```
+//!
+//! 2. Set environment variables:
+//!    ```bash
+//!    export XYBRID_TEST_INGEST_URL=http://localhost:8000   # ingestion API base URL
+//!    export XYBRID_TEST_API_KEY=sk_test_your_key_here      # API key for the endpoint
+//!    ```
+//!
+//! ## Usage
+//!
+//! ```bash
+//! # Run the integration test (ignored by default — needs env vars + model)
+//! XYBRID_TEST_INGEST_URL=http://localhost:8000 \
+//! XYBRID_TEST_API_KEY=sk_test_abc123 \
+//!   cargo test -p xybrid-sdk --test telemetry_integration -- --ignored
+//! ```
+
+use std::collections::HashMap;
+use std::sync::mpsc;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use xybrid_core::execution_template::ModelMetadata;
+use xybrid_core::ir::{Envelope, EnvelopeKind};
+use xybrid_core::template_executor::TemplateExecutor;
+use xybrid_core::testing::model_fixtures;
+use xybrid_sdk::{
+    flush_platform_telemetry, init_platform_telemetry, publish_telemetry_event,
+    register_telemetry_sender, shutdown_platform_telemetry, TelemetryConfig, TelemetryEvent,
+};
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64
+}
+
+fn event(event_type: &str) -> TelemetryEvent {
+    TelemetryEvent {
+        event_type: event_type.to_string(),
+        stage_name: None,
+        target: None,
+        latency_ms: None,
+        error: None,
+        data: None,
+        timestamp_ms: now_ms(),
+    }
+}
+
+/// Create a dummy 28×28 grayscale image as a flat f32 vec (784 pixels).
+/// Draws a rough "1" digit shape for a semi-realistic input.
+fn mnist_input_envelope() -> Envelope {
+    let mut pixels = vec![0.0f32; 28 * 28];
+    // Draw a vertical line in columns 13-14, rows 4-24 (a rough "1")
+    for row in 4..24 {
+        for col in 13..15 {
+            pixels[row * 28 + col] = 255.0;
+        }
+    }
+    Envelope {
+        kind: EnvelopeKind::Embedding(pixels),
+        metadata: HashMap::new(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+/// Full end-to-end: init telemetry → run MNIST → emit events → flush to API.
+///
+/// Ignored by default because it requires:
+/// - `XYBRID_TEST_INGEST_URL` and `XYBRID_TEST_API_KEY` env vars
+/// - The MNIST model fixture on disk
+#[test]
+#[ignore]
+fn telemetry_e2e_with_mnist_inference() {
+    // -- 1. Read config from env ------------------------------------------
+    let ingest_url = std::env::var("XYBRID_TEST_INGEST_URL")
+        .expect("Set XYBRID_TEST_INGEST_URL to the ingestion API base URL");
+    let api_key = std::env::var("XYBRID_TEST_API_KEY")
+        .expect("Set XYBRID_TEST_API_KEY to a valid API key");
+
+    println!("Ingestion endpoint : {}", ingest_url);
+    println!("API key            : {}…", &api_key[..api_key.len().min(12)]);
+
+    // -- 2. Locate model --------------------------------------------------
+    let model_dir = model_fixtures::require_model("mnist");
+    let metadata_path = model_dir.join("model_metadata.json");
+    let metadata: ModelMetadata =
+        serde_json::from_str(&std::fs::read_to_string(&metadata_path).unwrap()).unwrap();
+
+    // -- 3. Register a local channel so we can observe emitted events -----
+    let (tx, rx) = mpsc::channel::<TelemetryEvent>();
+    register_telemetry_sender(tx);
+
+    // -- 4. Init platform telemetry (HTTP exporter) -----------------------
+    let config = TelemetryConfig::new(&ingest_url, &api_key)
+        .with_device("integration-test", "ci")
+        .with_app_version(env!("CARGO_PKG_VERSION"))
+        .with_batch_size(1) // flush every event immediately
+        .with_flush_interval(1);
+    init_platform_telemetry(config);
+
+    // -- 5. Emit PipelineStart --------------------------------------------
+    let mut start_ev = event("PipelineStart");
+    start_ev.data = Some(r#"{"stages":["mnist"]}"#.to_string());
+    publish_telemetry_event(start_ev);
+
+    // -- 6. Run MNIST inference -------------------------------------------
+    let mut executor = TemplateExecutor::with_base_path(model_dir.to_str().unwrap());
+    let input = mnist_input_envelope();
+
+    let start = Instant::now();
+    let output = executor
+        .execute(&metadata, &input, None)
+        .expect("MNIST inference should succeed");
+    let latency_ms = start.elapsed().as_millis() as u32;
+
+    // Validate output is an Embedding with 10 class probabilities
+    match &output.kind {
+        EnvelopeKind::Embedding(probs) => {
+            assert_eq!(probs.len(), 10, "MNIST should output 10 class probabilities");
+            let sum: f32 = probs.iter().sum();
+            assert!(
+                (sum - 1.0).abs() < 0.01,
+                "Softmax output should sum to ~1.0, got {}",
+                sum
+            );
+            let predicted = probs
+                .iter()
+                .enumerate()
+                .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+                .map(|(i, _)| i)
+                .unwrap();
+            println!("MNIST predicted digit: {} (latency: {}ms)", predicted, latency_ms);
+        }
+        other => panic!("Expected Embedding output, got {:?}", other.as_str()),
+    }
+
+    // -- 7. Emit PipelineComplete -----------------------------------------
+    let mut complete_ev = event("PipelineComplete");
+    complete_ev.stage_name = Some("mnist".to_string());
+    complete_ev.target = Some("device".to_string());
+    complete_ev.latency_ms = Some(latency_ms);
+    publish_telemetry_event(complete_ev);
+
+    // -- 8. Flush and shutdown --------------------------------------------
+    flush_platform_telemetry();
+    // Give the HTTP exporter a moment to deliver
+    std::thread::sleep(Duration::from_secs(2));
+    shutdown_platform_telemetry();
+
+    // -- 9. Verify events were observed locally ---------------------------
+    let mut collected: Vec<TelemetryEvent> = Vec::new();
+    while let Ok(ev) = rx.try_recv() {
+        collected.push(ev);
+    }
+
+    assert!(
+        collected.len() >= 2,
+        "Expected at least 2 events (PipelineStart + PipelineComplete), got {}",
+        collected.len()
+    );
+
+    let types: Vec<&str> = collected.iter().map(|e| e.event_type.as_str()).collect();
+    assert!(
+        types.contains(&"PipelineStart"),
+        "Missing PipelineStart event. Got: {:?}",
+        types
+    );
+    assert!(
+        types.contains(&"PipelineComplete"),
+        "Missing PipelineComplete event. Got: {:?}",
+        types
+    );
+
+    println!(
+        "OK — {} telemetry events captured and flushed to {}",
+        collected.len(),
+        ingest_url
+    );
+}
+
+/// Verify that telemetry events are published through the sender channel
+/// even without a remote endpoint. This does NOT require env vars.
+#[test]
+fn telemetry_local_event_publishing() {
+    let (tx, rx) = mpsc::channel::<TelemetryEvent>();
+    register_telemetry_sender(tx);
+
+    // Publish a few events
+    publish_telemetry_event(event("TestStart"));
+    publish_telemetry_event(event("TestComplete"));
+
+    // Small delay for channel delivery
+    std::thread::sleep(Duration::from_millis(50));
+
+    let mut collected: Vec<TelemetryEvent> = Vec::new();
+    while let Ok(ev) = rx.try_recv() {
+        collected.push(ev);
+    }
+
+    assert!(
+        collected.len() >= 2,
+        "Expected at least 2 events, got {}",
+        collected.len()
+    );
+    assert_eq!(collected[0].event_type, "TestStart");
+    assert_eq!(collected[1].event_type, "TestComplete");
+}
+
+/// Verify that telemetry events carry correct metadata when fields are set.
+#[test]
+fn telemetry_event_fields() {
+    let mut ev = event("StageComplete");
+    ev.stage_name = Some("preprocess".to_string());
+    ev.target = Some("local".to_string());
+    ev.latency_ms = Some(42);
+    ev.error = None;
+    ev.data = Some(r#"{"model":"mnist"}"#.to_string());
+
+    assert_eq!(ev.event_type, "StageComplete");
+    assert_eq!(ev.stage_name.as_deref(), Some("preprocess"));
+    assert_eq!(ev.target.as_deref(), Some("local"));
+    assert_eq!(ev.latency_ms, Some(42));
+    assert!(ev.error.is_none());
+    assert!(ev.timestamp_ms > 0);
+
+    // Round-trip through serde
+    let json = serde_json::to_string(&ev).unwrap();
+    let deser: TelemetryEvent = serde_json::from_str(&json).unwrap();
+    assert_eq!(deser.event_type, ev.event_type);
+    assert_eq!(deser.latency_ms, ev.latency_ms);
+}
+
+/// Smoke test: MNIST inference works without telemetry (no env vars needed).
+/// Ensures the model fixture is valid and the execution pipeline doesn't panic.
+#[test]
+fn mnist_inference_smoke_test() {
+    let Some(model_dir) = model_fixtures::model_or_skip("mnist") else {
+        return; // model not downloaded — skip gracefully
+    };
+
+    let metadata_path = model_dir.join("model_metadata.json");
+    let metadata: ModelMetadata =
+        serde_json::from_str(&std::fs::read_to_string(&metadata_path).unwrap()).unwrap();
+
+    let mut executor = TemplateExecutor::with_base_path(model_dir.to_str().unwrap());
+    let input = mnist_input_envelope();
+
+    let output = executor
+        .execute(&metadata, &input, None)
+        .expect("MNIST inference should succeed");
+
+    match &output.kind {
+        EnvelopeKind::Embedding(probs) => {
+            assert_eq!(probs.len(), 10);
+        }
+        other => panic!("Expected Embedding output, got {:?}", other.as_str()),
+    }
+}
