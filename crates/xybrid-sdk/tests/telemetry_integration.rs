@@ -92,11 +92,14 @@ fn telemetry_e2e_with_mnist_inference() {
     // -- 1. Read config from env ------------------------------------------
     let ingest_url = std::env::var("XYBRID_TEST_INGEST_URL")
         .expect("Set XYBRID_TEST_INGEST_URL to the ingestion API base URL");
-    let api_key = std::env::var("XYBRID_TEST_API_KEY")
-        .expect("Set XYBRID_TEST_API_KEY to a valid API key");
+    let api_key =
+        std::env::var("XYBRID_TEST_API_KEY").expect("Set XYBRID_TEST_API_KEY to a valid API key");
 
     println!("Ingestion endpoint : {}", ingest_url);
-    println!("API key            : {}…", &api_key[..api_key.len().min(12)]);
+    println!(
+        "API key            : {}…",
+        &api_key[..api_key.len().min(12)]
+    );
 
     // -- 2. Locate model --------------------------------------------------
     let model_dir = model_fixtures::require_model("mnist");
@@ -134,7 +137,11 @@ fn telemetry_e2e_with_mnist_inference() {
     // Validate output is an Embedding with 10 class probabilities
     match &output.kind {
         EnvelopeKind::Embedding(probs) => {
-            assert_eq!(probs.len(), 10, "MNIST should output 10 class probabilities");
+            assert_eq!(
+                probs.len(),
+                10,
+                "MNIST should output 10 class probabilities"
+            );
             let sum: f32 = probs.iter().sum();
             assert!(
                 (sum - 1.0).abs() < 0.01,
@@ -147,7 +154,10 @@ fn telemetry_e2e_with_mnist_inference() {
                 .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
                 .map(|(i, _)| i)
                 .unwrap();
-            println!("MNIST predicted digit: {} (latency: {}ms)", predicted, latency_ms);
+            println!(
+                "MNIST predicted digit: {} (latency: {}ms)",
+                predicted, latency_ms
+            );
         }
         other => panic!("Expected Embedding output, got {:?}", other.as_str()),
     }
