@@ -33,7 +33,7 @@
 //!
 //! - `XYBRID_TEST_MODELS`: Override the default model search path
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 /// Environment variable name for custom test models path.
@@ -110,7 +110,26 @@ pub fn model_path(model_name: &str) -> Option<PathBuf> {
     }
 }
 
-/// Check if a model is available (directory exists with model_metadata.json).
+/// Check if a model directory has actual model binary files downloaded.
+///
+/// A model is only considered ready if it has at least one binary file
+/// (`.onnx`, `.safetensors`, or `.gguf`). Having only `model_metadata.json`
+/// is not sufficient since metadata is checked into git but binaries are not.
+fn has_model_binaries(dir: &Path) -> bool {
+    const MODEL_EXTENSIONS: &[&str] = &["onnx", "safetensors", "gguf"];
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            if let Some(ext) = entry.path().extension() {
+                if MODEL_EXTENSIONS.iter().any(|e| ext == *e) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Check if a model is available (directory exists with downloaded model binaries).
 ///
 /// # Example
 ///
@@ -123,7 +142,7 @@ pub fn model_path(model_name: &str) -> Option<PathBuf> {
 /// ```
 pub fn model_available(model_name: &str) -> bool {
     model_path(model_name)
-        .map(|p| p.join("model_metadata.json").exists() || p.join("model.onnx").exists())
+        .map(|p| has_model_binaries(&p))
         .unwrap_or(false)
 }
 
@@ -143,7 +162,7 @@ pub fn model_available(model_name: &str) -> bool {
 /// ```
 pub fn require_model(model_name: &str) -> PathBuf {
     if let Some(path) = model_path(model_name) {
-        if path.join("model_metadata.json").exists() || path.join("model.onnx").exists() {
+        if has_model_binaries(&path) {
             return path;
         }
     }
@@ -188,7 +207,7 @@ You can also set XYBRID_TEST_MODELS environment variable to a custom path.
 /// ```
 pub fn model_or_skip(model_name: &str) -> Option<PathBuf> {
     if let Some(path) = model_path(model_name) {
-        if path.join("model_metadata.json").exists() || path.join("model.onnx").exists() {
+        if has_model_binaries(&path) {
             return Some(path);
         }
     }
@@ -228,10 +247,7 @@ pub fn list_available_models() -> Vec<String> {
     entries
         .filter_map(|e| e.ok())
         .filter(|e| e.path().is_dir())
-        .filter(|e| {
-            let path = e.path();
-            path.join("model_metadata.json").exists() || path.join("model.onnx").exists()
-        })
+        .filter(|e| has_model_binaries(&e.path()))
         .filter_map(|e| e.file_name().into_string().ok())
         .collect()
 }
