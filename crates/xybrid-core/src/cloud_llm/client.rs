@@ -339,52 +339,55 @@ mod tests {
     use super::super::request::Message;
     use super::*;
 
+    /// Helper to create an OpenAI client with a direct API key (no env var manipulation).
+    fn openai_client_with_key(key: &str) -> LlmClient {
+        let mut config = ProviderConfig::new(IntegrationProvider::OpenAI);
+        config.api_key = Some(key.to_string());
+        LlmClient::with_config(config).unwrap()
+    }
+
+    /// Helper to create an Anthropic client with a direct API key (no env var manipulation).
+    fn anthropic_client_with_key(key: &str) -> LlmClient {
+        let mut config = ProviderConfig::new(IntegrationProvider::Anthropic);
+        config.api_key = Some(key.to_string());
+        LlmClient::with_config(config).unwrap()
+    }
+
     #[test]
     fn test_client_creation_requires_key() {
-        // Save any existing key
-        let original = std::env::var("OPENAI_API_KEY").ok();
+        // Use an env var reference to a nonexistent variable, so resolve_api_key()
+        // returns None without touching real env vars (avoids test race conditions).
+        let mut config = ProviderConfig::new(IntegrationProvider::OpenAI);
+        config.api_key = Some("$XYBRID_TEST_NONEXISTENT_KEY_12345".to_string());
 
-        // Clear the key to test missing key behavior
-        std::env::remove_var("OPENAI_API_KEY");
-
-        let result = LlmClient::openai();
+        let result = LlmClient::with_config(config);
         assert!(matches!(result, Err(LlmError::ApiKeyMissing { .. })));
-
-        // Restore the original key if it was set
-        if let Some(key) = original {
-            std::env::set_var("OPENAI_API_KEY", key);
-        }
     }
 
     #[test]
     fn test_client_with_key() {
-        std::env::set_var("OPENAI_API_KEY", "test-key-123");
+        let mut config = ProviderConfig::new(IntegrationProvider::OpenAI);
+        config.api_key = Some("test-key-123".to_string());
 
-        let client = LlmClient::openai();
+        let client = LlmClient::with_config(config);
         assert!(client.is_ok());
 
         let client = client.unwrap();
         assert_eq!(client.provider(), IntegrationProvider::OpenAI);
-
-        std::env::remove_var("OPENAI_API_KEY");
     }
 
     #[test]
     fn test_unsupported_provider() {
-        std::env::set_var("ELEVENLABS_API_KEY", "test");
+        let mut config = ProviderConfig::new(IntegrationProvider::ElevenLabs);
+        config.api_key = Some("test".to_string());
 
-        let config = ProviderConfig::new(IntegrationProvider::ElevenLabs);
         let result = LlmClient::with_config(config);
-
         assert!(matches!(result, Err(LlmError::UnsupportedProvider(_))));
-
-        std::env::remove_var("ELEVENLABS_API_KEY");
     }
 
     #[test]
     fn test_build_openai_messages() {
-        std::env::set_var("OPENAI_API_KEY", "test");
-        let client = LlmClient::openai().unwrap();
+        let client = openai_client_with_key("test");
 
         let request = LlmRequest::prompt("Hello").with_system("Be helpful");
 
@@ -393,14 +396,11 @@ mod tests {
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[0]["role"], "system");
         assert_eq!(messages[1]["role"], "user");
-
-        std::env::remove_var("OPENAI_API_KEY");
     }
 
     #[test]
     fn test_build_anthropic_messages() {
-        std::env::set_var("ANTHROPIC_API_KEY", "test");
-        let client = LlmClient::anthropic().unwrap();
+        let client = anthropic_client_with_key("test");
 
         // System message should not be in the messages array for Anthropic
         let request = LlmRequest::chat(vec![Message::system("Be helpful"), Message::user("Hello")]);
@@ -410,7 +410,5 @@ mod tests {
         // Should only have user message (system is handled separately)
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0]["role"], "user");
-
-        std::env::remove_var("ANTHROPIC_API_KEY");
     }
 }

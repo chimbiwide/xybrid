@@ -367,6 +367,10 @@ fn compile_llama_cpp() {
     println!("cargo:rustc-link-lib=static=ggml-cpu");
 
     // Build our C++ wrapper (C++17 required by llama.cpp headers)
+    // Note: Do NOT set .opt_level() here — let the cc crate auto-detect from Cargo's profile.
+    // On MSVC, the cc crate determines /MD vs /MDd (CRT linkage) from the optimization level.
+    // Forcing opt_level(3) in a debug build causes /MD (release CRT) which mismatches CMake's
+    // Debug build (/MDd), producing LNK2038 errors on Windows.
     let mut wrapper_build = cc::Build::new();
     wrapper_build
         .cpp(true)
@@ -374,8 +378,7 @@ fn compile_llama_cpp() {
         .file(&wrapper_path)
         .include(llama_cpp_dir.join("include"))
         .include(llama_cpp_dir.join("ggml/include"))
-        .include(dst.join("include"))
-        .opt_level(3);
+        .include(dst.join("include"));
 
     // Windows MSVC CRT: Do NOT call static_crt() — let the cc crate auto-detect from
     // CARGO_CFG_TARGET_FEATURE. When crt-static is set (CLI via RUSTFLAGS), cc uses /MT.
