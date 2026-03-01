@@ -101,7 +101,7 @@ dependencies:
 
 ```gradle
 dependencies {
-    implementation("ai.xybrid:xybrid-kotlin:0.1.0-alpha7")
+    implementation("ai.xybrid:xybrid-kotlin:0.1.0-alpha8")
 }
 ```
 
