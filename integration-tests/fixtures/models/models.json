@@ -311,6 +311,19 @@
         }
       }
     },
+    "ministral-3-3b": {
+      "description": "Ministral 3 3B Instruct - Mistral AI's edge-optimized LLM (GGUF Q4_K_M, 2.15GB)",
+      "source": "url",
+      "size_mb": 2150,
+      "task": "text-generation",
+      "feature_gate": "llm-llamacpp",
+      "files": [
+        {
+          "url": "https://huggingface.co/mistralai/Ministral-3-3B-Instruct-2512-GGUF/resolve/main/Ministral-3-3B-Instruct-2512-Q4_K_M.gguf",
+          "output": "Ministral-3-3B-Instruct-2512-Q4_K_M.gguf"
+        }
+      ]
+    },
     "kitten-tts": {
       "description": "Ultra-lightweight TTS (15M params, 8 voices, 24kHz audio, requires espeak-ng)",
       "source": "url",
