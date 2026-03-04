@@ -245,6 +245,20 @@ enum Commands {
         #[arg(short, long, value_name = "PATH")]
         path: Option<PathBuf>,
     },
+    /// Fetch a model from the registry and produce a .xyb bundle
+    Bundle {
+        /// Model ID (e.g., "kokoro-82m", "qwen2.5-0.5b-instruct")
+        #[arg(value_name = "MODEL")]
+        model: String,
+
+        /// Output path for the .xyb bundle
+        #[arg(short, long, value_name = "FILE")]
+        output: Option<PathBuf>,
+
+        /// Target platform (auto-detected if not specified)
+        #[arg(short, long, value_name = "PLATFORM")]
+        platform: Option<String>,
+    },
 }
 
 /// Subcommands for `xybrid models`
@@ -551,6 +565,11 @@ fn run_command(cli: Cli) -> Result<()> {
             target,
             path,
         } => pack_model(&name, &version, &target, path.as_deref()),
+        Commands::Bundle {
+            model,
+            output,
+            platform,
+        } => handle_bundle_command(&model, output, platform.as_deref()),
     }
 }
 
@@ -3264,6 +3283,247 @@ fn handle_fetch_command(model_id: &str, platform: Option<&str>) -> Result<()> {
     println!("{}", "=".repeat(60));
 
     Ok(())
+}
+
+/// Handle `xybrid bundle` command: fetch a registry model and produce a .xyb bundle.
+fn handle_bundle_command(
+    model_id: &str,
+    output: Option<PathBuf>,
+    platform: Option<&str>,
+) -> Result<()> {
+    use indicatif::{ProgressBar, ProgressStyle};
+
+    println!("📦 Xybrid Bundle");
+    println!("{}", "=".repeat(60));
+    println!("Model: {}", model_id.cyan().bold());
+    if let Some(p) = platform {
+        println!("Platform: {}", p);
+    } else {
+        println!("Platform: auto-detect");
+    }
+    println!();
+
+    let client = RegistryClient::from_env().context("Failed to initialize registry client")?;
+
+    // Resolve model variant
+    println!("Resolving {}...", model_id);
+    let resolved = client
+        .resolve(model_id, platform)
+        .context(format!("Failed to resolve model '{}'", model_id))?;
+
+    println!("   Repository: {}", resolved.hf_repo);
+    println!("   File: {}", resolved.file);
+    println!(
+        "   Size: {}",
+        format_size(resolved.size_bytes).bright_cyan()
+    );
+    println!("   Format: {} ({})", resolved.format, resolved.quantization);
+    println!(
+        "   Type: {}",
+        if resolved.passthrough {
+            "passthrough"
+        } else {
+            "bundle (.xyb)"
+        }
+    );
+    println!();
+
+    // Determine target string for the output bundle
+    let target = platform.unwrap_or("universal");
+
+    if !resolved.passthrough {
+        // --- Non-passthrough: the registry already has a .xyb bundle ---
+        let cache_path = client.get_cache_path(&resolved);
+
+        // Download if not cached
+        if !cache_path.exists() {
+            let pb = ProgressBar::new(resolved.size_bytes);
+            pb.set_style(
+                ProgressStyle::default_bar()
+                    .template("{spinner:.green} Downloading {msg} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}, {eta})")
+                    .unwrap()
+                    .progress_chars("█▓▒░  ")
+            );
+            pb.set_message(model_id.to_string());
+
+            client
+                .fetch(model_id, platform, |progress| {
+                    let bytes_done = (progress * resolved.size_bytes as f32) as u64;
+                    pb.set_position(bytes_done);
+                })
+                .context(format!("Failed to fetch model '{}'", model_id))?;
+
+            pb.finish_with_message(format!("✅ Downloaded {}", model_id));
+            println!();
+        } else {
+            println!("✅ Model already cached at {}", cache_path.display());
+        }
+
+        // Read version from the cached bundle manifest
+        let cached_bundle = XyBundle::load(&cache_path)
+            .with_context(|| format!("Failed to load cached bundle: {}", cache_path.display()))?;
+        let version = cached_bundle.manifest().version.clone();
+
+        // Resolve output path
+        let out_path = resolve_bundle_output(&output, model_id, &version, target)?;
+
+        // Copy cached .xyb to output
+        fs::copy(&cache_path, &out_path).with_context(|| {
+            format!(
+                "Failed to copy bundle from {} to {}",
+                cache_path.display(),
+                out_path.display()
+            )
+        })?;
+
+        let out_size = fs::metadata(&out_path).map(|m| m.len()).unwrap_or(0);
+        println!();
+        println!("✅ Bundle written: {}", out_path.display());
+        println!("   Size: {}", format_size(out_size));
+        println!("   Files: {}", cached_bundle.manifest().files.len());
+    } else {
+        // --- Passthrough: fetch raw files, then create a new .xyb bundle ---
+        let pb = ProgressBar::new(resolved.size_bytes);
+        pb.set_style(
+            ProgressStyle::default_bar()
+                .template("{spinner:.green} Downloading {msg} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}, {eta})")
+                .unwrap()
+                .progress_chars("█▓▒░  ")
+        );
+        pb.set_message(model_id.to_string());
+
+        let extract_dir = client
+            .fetch_extracted(model_id, platform, |progress| {
+                let bytes_done = (progress * resolved.size_bytes as f32) as u64;
+                pb.set_position(bytes_done);
+            })
+            .context(format!("Failed to fetch model '{}'", model_id))?;
+
+        pb.finish_with_message(format!("✅ Downloaded {}", model_id));
+        println!();
+
+        // Read version from model_metadata.json if available
+        let version = read_model_version(&extract_dir).unwrap_or_else(|| "1.0".to_string());
+
+        // Create a new .xyb bundle from the extracted directory
+        println!("Bundling into .xyb...");
+        let mut bundle = XyBundle::new(model_id, &version, target);
+
+        // Walk extracted directory and add files preserving subdirectory structure
+        fn visit_dir(dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
+            for entry in fs::read_dir(dir)
+                .with_context(|| format!("Failed to read dir: {}", dir.display()))?
+            {
+                let entry = entry?;
+                let path = entry.path();
+                if path.is_dir() {
+                    visit_dir(&path, files)?;
+                } else if path.is_file() {
+                    files.push(path);
+                }
+            }
+            Ok(())
+        }
+
+        let mut files_to_add: Vec<PathBuf> = Vec::new();
+        visit_dir(&extract_dir, &mut files_to_add)?;
+
+        if files_to_add.is_empty() {
+            return Err(anyhow::anyhow!(
+                "No files found in extracted directory: {}",
+                extract_dir.display()
+            ));
+        }
+
+        let mut added = 0usize;
+        for file in &files_to_add {
+            let rel_path = file
+                .strip_prefix(&extract_dir)
+                .unwrap_or(file.as_path())
+                .to_string_lossy()
+                .to_string();
+
+            // Skip hash sidecar files
+            if rel_path.ends_with(".sha256") {
+                continue;
+            }
+
+            bundle
+                .add_file_with_relative_path(file, &rel_path)
+                .with_context(|| format!("Failed to add file: {}", file.display()))?;
+
+            let file_size = fs::metadata(file).map(|m| m.len()).unwrap_or(0);
+            println!("  Added: {} ({})", rel_path, format_size(file_size));
+            added += 1;
+        }
+
+        if added == 0 {
+            return Err(anyhow::anyhow!(
+                "No files added to bundle from {}",
+                extract_dir.display()
+            ));
+        }
+
+        // Resolve output path and write
+        let out_path = resolve_bundle_output(&output, model_id, &version, target)?;
+
+        bundle
+            .write(&out_path)
+            .with_context(|| format!("Failed to write bundle: {}", out_path.display()))?;
+
+        let out_size = fs::metadata(&out_path).map(|m| m.len()).unwrap_or(0);
+        println!();
+        println!("✅ Bundle written: {}", out_path.display());
+        println!("   Size: {} (compressed)", format_size(out_size));
+        println!("   Files: {}", added);
+    }
+
+    println!();
+    println!("{}", "=".repeat(60));
+    Ok(())
+}
+
+/// Resolve the output path for a bundle command.
+/// If `output` is provided, use it directly (creating parent dirs as needed).
+/// Otherwise, default to `./dist/{model_id}-{version}-{target}.xyb`.
+fn resolve_bundle_output(
+    output: &Option<PathBuf>,
+    model_id: &str,
+    version: &str,
+    target: &str,
+) -> Result<PathBuf> {
+    let out_path = if let Some(out) = output {
+        out.clone()
+    } else {
+        let mut dist_dir = std::env::current_dir().context("Failed to get current directory")?;
+        dist_dir.push("dist");
+        dist_dir.join(format!("{}-{}-{}.xyb", model_id, version, target))
+    };
+
+    // Ensure parent directory exists
+    if let Some(parent) = out_path.parent() {
+        if !parent.exists() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
+        }
+    }
+
+    // Warn if file already exists
+    if out_path.exists() {
+        println!("⚠️  Overwriting existing file: {}", out_path.display());
+    }
+
+    Ok(out_path)
+}
+
+/// Read the version from model_metadata.json in a directory.
+fn read_model_version(dir: &Path) -> Option<String> {
+    let metadata_path = dir.join("model_metadata.json");
+    let content = fs::read_to_string(&metadata_path).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&content).ok()?;
+    json.get("version")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
 }
 
 /// Handle `xybrid cache` subcommands
