@@ -67,7 +67,9 @@
   <img src="docs/demo-android.gif" alt="Android demo" width="150">
 </p>
 
----
+<p align="center">
+  <img src="docs/game-demo.gif" alt="游戏演示" width="540">
+</p>
 
 ## SDK
 
