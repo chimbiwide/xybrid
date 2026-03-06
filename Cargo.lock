@@ -3470,7 +3470,7 @@ dependencies = [
 
 [[package]]
 name = "integration-tests"
-version = "0.1.0-beta1"
+version = "0.1.0-beta2"
 dependencies = [
  "anyhow",
  "dirs 5.0.1",
@@ -4139,7 +4139,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "urlencoding",
- "uuid 1.21.0",
+ "uuid 1.22.0",
  "variantly",
  "vob",
 ]
@@ -4172,7 +4172,7 @@ dependencies = [
  "tokio-tungstenite",
  "tracing",
  "utoipa",
- "uuid 1.21.0",
+ "uuid 1.22.0",
 ]
 
 [[package]]
@@ -4770,9 +4770,9 @@ dependencies = [
 
 [[package]]
 name = "ort"
-version = "2.0.0-rc.12"
+version = "2.0.0-rc.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7de3af33d24a745ffb8fab904b13478438d1cd52868e6f17735ef6e1f8bf133"
+checksum = "4a5df903c0d2c07b56950f1058104ab0c8557159f2741782223704de9be73c3c"
 dependencies = [
  "libloading 0.9.0",
  "ndarray 0.17.2",
@@ -4784,9 +4784,9 @@ dependencies = [
 
 [[package]]
 name = "ort-sys"
-version = "2.0.0-rc.12"
+version = "2.0.0-rc.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7b497d21a8b6fbb4b5a544f8fadb77e801a09ae0add9e411d31c6f89e3c1e90"
+checksum = "06503bb33f294c5f1ba484011e053bfa6ae227074bdb841e9863492dc5960d4b"
 dependencies = [
  "hmac-sha256",
  "lzma-rust2",
@@ -7984,9 +7984,9 @@ dependencies = [
 
 [[package]]
 name = "uuid"
-version = "1.21.0"
+version = "1.22.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b672338555252d43fd2240c714dc444b8c6fb0a5c5335e65a07bba7742735ddb"
+checksum = "a68d3c8f01c0cfa54a75291d83601161799e4a89a39e0929f4b0354d88757a37"
 dependencies = [
  "getrandom 0.4.2",
  "js-sys",
@@ -8982,7 +8982,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.1.0-beta1"
+version = "0.1.0-beta2"
 dependencies = [
  "anyhow",
  "clap 4.5.60",
@@ -8995,7 +8995,7 @@ dependencies = [
 
 [[package]]
 name = "xybrid-cli"
-version = "0.1.0-beta1"
+version = "0.1.0-beta2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -9014,14 +9014,14 @@ dependencies = [
  "tracing",
  "tracing-flame",
  "tracing-subscriber",
- "uuid 1.21.0",
+ "uuid 1.22.0",
  "xybrid-core",
  "xybrid-sdk",
 ]
 
 [[package]]
 name = "xybrid-core"
-version = "0.1.0-beta1"
+version = "0.1.0-beta2"
 dependencies = [
  "anyhow",
  "base64 0.21.7",
@@ -9066,7 +9066,7 @@ dependencies = [
  "unicode-normalization",
  "ureq 2.12.1",
  "url",
- "uuid 1.21.0",
+ "uuid 1.22.0",
  "walkdir",
  "xybrid-sdk",
  "zstd",
@@ -9074,7 +9074,7 @@ dependencies = [
 
 [[package]]
 name = "xybrid-ffi"
-version = "0.1.0-beta1"
+version = "0.1.0-beta2"
 dependencies = [
  "cbindgen",
  "csbindgen",
@@ -9085,7 +9085,7 @@ dependencies = [
 
 [[package]]
 name = "xybrid-macros"
-version = "0.1.0-beta1"
+version = "0.1.0-beta2"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -9094,7 +9094,7 @@ dependencies = [
 
 [[package]]
 name = "xybrid-sdk"
-version = "0.1.0-beta1"
+version = "0.1.0-beta2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -9110,14 +9110,14 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "ureq 2.12.1",
- "uuid 1.21.0",
+ "uuid 1.22.0",
  "xybrid-core",
  "xybrid-macros",
 ]
 
 [[package]]
 name = "xybrid-uniffi"
-version = "0.1.0-beta1"
+version = "0.1.0-beta2"
 dependencies = [
  "serde_json",
  "thiserror 1.0.69",
@@ -9127,7 +9127,7 @@ dependencies = [
 
 [[package]]
 name = "xybrid_flutter"
-version = "0.1.0-beta1"
+version = "0.1.0-beta2"
 dependencies = [
  "android_logger 0.14.1",
  "flutter_rust_bridge",

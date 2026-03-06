@@ -774,7 +774,7 @@ void xybrid_generation_config_free(struct XybridGenerationConfigHandle *config);
  # Example (C)
 
  ```c
- XybridResultHandle* result = xybrid_model_run(model, envelope);
+ XybridResultHandle* result = xybrid_model_run(model, envelope, std::ptr::null_mut());
  if (result == NULL) {
      fprintf(stderr, "Inference failed: %s\n", xybrid_last_error());
      return 1;
@@ -1171,7 +1171,7 @@ const char *xybrid_result_error(struct XybridResultHandle *result);
  # Example (C)
 
  ```c
- XybridResultHandle* result = xybrid_model_run(model, envelope);
+ XybridResultHandle* result = xybrid_model_run(model, envelope, std::ptr::null_mut());
  if (xybrid_result_success(result)) {
      const char* text = xybrid_result_text(result);
      if (text != NULL) {
@@ -1353,7 +1353,7 @@ uintptr_t xybrid_result_embedding_len(struct XybridResultHandle *result);
  # Example (C)
 
  ```c
- XybridResultHandle* result = xybrid_model_run(model, envelope);
+ XybridResultHandle* result = xybrid_model_run(model, envelope, std::ptr::null_mut());
  // ... use result ...
  xybrid_result_free(result);
  result = NULL; // Good practice: null out after freeing
