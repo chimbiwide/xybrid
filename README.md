@@ -78,7 +78,7 @@ Xybrid is a **Rust-powered runtime** with native bindings for every major platfo
 | SDK | Platforms | Install | Status | Sample |
 |-----|-----------|---------|--------|--------|
 | **[Flutter](bindings/flutter/)** | iOS, Android, macOS, Linux, Windows | [pub.dev](https://pub.dev/packages/xybrid_flutter) | Available | [README](examples/flutter/README.md) |
-| **[Unity](bindings/unity/)** | macOS, Windows, Linux | [See below](#install) | Available | [Unity 3D AI tavern](https://github.com/xybrid-ai/xybrid-unity-tavern) |
+| **[Unity](bindings/unity/)** | macOS, Windows, Linux, iOS, Android | [See below](#install) | Available | [Unity 3D AI tavern](https://github.com/xybrid-ai/xybrid-unity-tavern) |
 | **[Swift](bindings/apple/)** | iOS, macOS | Swift Package Manager | Coming Soon | [README](examples/ios/README.md) |
 | **[Kotlin](bindings/kotlin/)** | Android | Maven Central | Available | [README](examples/android/README.md) |
 | **[CLI](https://github.com/xybrid-ai/xybrid/releases)** | macOS, Linux, Windows | [Download binary](https://github.com/xybrid-ai/xybrid/releases) | Available | — |
@@ -91,8 +91,11 @@ Every SDK wraps the same Rust core — identical model support and behavior acro
 **Unity** — Package Manager → Add from git URL:
 
 ```bash
-https://github.com/xybrid-ai/xybrid.git?path=bindings/unity
+https://github.com/xybrid-ai/xybrid.git#upm
 ```
+
+> The `upm` branch contains pre-built native libraries for all platforms.
+> To pin a specific version: `https://github.com/xybrid-ai/xybrid.git#upm/v0.1.0-beta3`
 
 **Flutter** — add to your `pubspec.yaml`:
 
