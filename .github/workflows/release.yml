@@ -174,7 +174,7 @@ jobs:
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/${{ env.NDK_VERSION }}" >> $GITHUB_ENV
 
       - name: Install cargo-ndk
-        run: cargo install cargo-ndk
+        run: which cargo-ndk || cargo install cargo-ndk
 
       - name: Build Android .so files
         run: cargo xtask build-android --release
@@ -326,7 +326,7 @@ jobs:
 
       - name: Install cargo-ndk
         if: matrix.android
-        run: cargo install cargo-ndk
+        run: which cargo-ndk || cargo install cargo-ndk
 
       - name: Install build tool dependencies
         working-directory: bindings/flutter/cargokit/build_tool

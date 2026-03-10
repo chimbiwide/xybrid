@@ -1,177 +1,101 @@
 ---
 title: Streaming Inference
-description: Real-time audio transcription with partial results
+description: Real-time token streaming for LLM and audio transcription
 ---
 
 
-Xybrid supports real-time streaming inference for speech recognition. Audio is processed in chunks with partial transcription results as you speak.
+Xybrid supports two types of streaming inference: **LLM token streaming** (available now) and **real-time audio streaming** (planned).
 
-## Architecture
+## LLM Token Streaming
 
-```
-Microphone → AudioBuffer → Chunking → Whisper → Partial Results
-                 ↑                         ↓
-             Overlap                  Callback
-```
+Stream LLM responses token-by-token as they are generated, enabling real-time chat UIs.
 
-### Key Components
-
-| Component | Description |
-|-----------|-------------|
-| `StreamSession` | Manages streaming state and processing |
-| `AudioBuffer` | Ring buffer with overlap support |
-| `XybridStreamer` | Flutter SDK streaming class |
-
-## How It Works
-
-1. Audio is fed continuously to the `AudioBuffer`
-2. When a chunk is ready (5 seconds by default), it's processed
-3. Whisper transcribes the chunk
-4. Partial result is emitted via callback
-5. On stop, remaining audio is flushed
-
-## Flutter SDK
-
-### Basic Usage
+### Flutter
 
 ```dart
-import 'package:xybrid_flutter/xybrid_flutter.dart';
+final model = await Xybrid.model('gemma-3-1b').load();
 
-// Create streaming session
-final streamer = await XybridStreamer.create(
-  modelPath: '/path/to/whisper-tiny-candle',
-  config: StreamingConfig(
-    chunkSizeMs: 5000,   // 5 second chunks
-    overlapMs: 500,       // 0.5s overlap
-  ),
-);
+final envelope = XybridEnvelope.text('Tell me a joke');
 
-// Listen for partial results
-streamer.onPartialResult.listen((partial) {
-  print('Partial: $partial');
-});
-
-// Feed audio from microphone
-micStream.listen((pcmChunk) {
-  streamer.feedPcm16(pcmChunk);
-});
-
-// Stop and get final result
-final result = await streamer.flush();
-print('Final: $result');
-
-// Cleanup
-await streamer.dispose();
-```
-
-### From Registry
-
-```dart
-final streamer = await XybridStreamer.createFromRegistry(
-  config: RegistryStreamingConfig(
-    modelId: 'whisper-tiny-candle',
-    version: '1.0',
-    registryUrl: 'http://localhost:8080',
-  ),
-);
-```
-
-### With XybridRecorder
-
-```dart
-final recorder = XybridRecorder();
-final streamer = await XybridStreamer.create(modelPath: modelPath);
-
-// Start streaming from microphone
-await recorder.startStreaming((samples) {
-  streamer.feed(samples);
-});
-
-streamer.onPartialResult.listen((text) {
-  setState(() => transcription = text);
-});
-
-// Stop
-await recorder.stopStreaming();
-final result = await streamer.flush();
-```
-
-## Streaming Config
-
-```dart
-StreamingConfig(
-  chunkSizeMs: 5000,    // Process every 5 seconds
-  overlapMs: 500,        // 0.5s overlap between chunks
-  useVad: false,         // Enable Voice Activity Detection
-)
-```
-
-### Chunk Size Trade-offs
-
-| Chunk Size | Latency | Accuracy |
-|------------|---------|----------|
-| 2 seconds | Low | Lower (less context) |
-| 5 seconds | Medium | Good balance |
-| 10 seconds | High | Better (more context) |
-
-## Session Lifecycle
-
-```dart
-// States
-enum StreamState {
-  idle,        // Ready to start
-  streaming,   // Receiving audio
-  finalizing,  // Processing remaining audio
-  completed,   // Done
-  error,       // Error occurred
-}
-
-// Check state
-if (streamer.state == StreamState.streaming) {
-  // Currently processing
+await for (final token in model.runStreaming(envelope)) {
+  stdout.write(token.token); // Print each token as it arrives
 }
 ```
 
-## Statistics
+#### With Conversation Context
 
 ```dart
-final stats = streamer.stats;
-print('Samples received: ${stats.samplesReceived}');
-print('Samples processed: ${stats.samplesProcessed}');
-print('Chunks processed: ${stats.chunksProcessed}');
-print('Audio duration: ${stats.audioDurationMs}ms');
-```
+final context = ConversationContext();
+context.setSystem('You are a helpful assistant.');
+context.pushText('Tell me a joke', MessageRole.user);
 
-## Voice Activity Detection (VAD)
+final envelope = XybridEnvelope.text('Tell me a joke');
 
-VAD automatically segments audio based on speech detection:
-
-```dart
-final streamer = await XybridStreamer.create(
-  modelPath: modelPath,
-  config: StreamingConfig(
-    useVad: true,
-  ),
-);
-
-// Check VAD availability
-if (streamer.hasVad) {
-  print('VAD enabled');
+await for (final token in model.runStreamingWithContext(envelope, context)) {
+  stdout.write(token.token);
 }
 ```
 
-## Performance
+#### With Generation Config
 
-Current baseline (M1 Mac, whisper-tiny-candle):
+```dart
+final stream = model.runStreaming(
+  XybridEnvelope.text('Write a poem'),
+  config: GenerationConfig.creative(),
+);
 
-| Metric | Value |
-|--------|-------|
-| Chunk duration | 5 seconds |
-| Partial result latency | ~5-7 seconds |
-| Processing mode | CPU |
+await for (final token in stream) {
+  stdout.write(token.token);
+}
+```
 
-### Optimization Opportunities
+### Unity (C#)
 
-- GPU/Metal acceleration
-- Smaller chunk sizes (2-3 seconds)
-- Distilled Whisper models
+```csharp
+// Callback-based streaming
+using (var envelope = Envelope.Text("Tell me a story."))
+using (var result = model.RunStreaming(envelope, token =>
+{
+    Debug.Log(token.Token);
+}))
+{
+    result.ThrowIfFailed();
+}
+
+// Convenience method
+string response = model.RunStreamingText("Tell me a story.", token =>
+{
+    dialogueText.text += token.Token;
+});
+```
+
+### StreamToken Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `token` | `String` | Generated token text |
+| `index` | `int` | Token position in sequence |
+| `cumulativeText` | `String` | All text generated so far |
+| `isFinal` | `bool` | Whether this is the last token |
+| `finishReason` | `String?` | `"stop"`, `"length"`, or `"error"` |
+
+## SDK Support
+
+| Feature | Flutter | Unity | Kotlin | Swift |
+|---------|---------|-------|--------|-------|
+| `runStreaming()` | Supported | Supported | Planned | Planned |
+| `runStreamingWithContext()` | Supported | Supported | Planned | Planned |
+| Generation config | Supported | Supported | Planned | Planned |
+
+---
+
+## Real-Time Audio Streaming (Planned)
+
+Real-time audio transcription with partial results (chunked Whisper inference) is planned for a future release. This will enable:
+
+- Continuous microphone input with chunked processing
+- Partial transcription results as audio is received
+- Voice Activity Detection (VAD) for automatic segmentation
+- Configurable chunk sizes and overlap
+
+This feature will be available across all SDKs when implemented.
