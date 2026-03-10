@@ -28,12 +28,12 @@ flutter pub get
 ```dart
 import 'package:xybrid_flutter/xybrid_flutter.dart';
 
-await RustLib.init();
+await Xybrid.init();
 
 // Load a model and run text-to-speech
-final model = await Xybrid.model(modelId: 'kokoro-82m').load();
+final model = await Xybrid.model('kokoro-82m').load();
 final result = await model.run(
-  envelope: Envelope.text(text: "Hello from Xybrid!"),
+  XybridEnvelope.text("Hello from Xybrid!"),
 );
 
 // result.audioBytes contains the generated speech audio
@@ -66,11 +66,11 @@ dependencies: [
 import Xybrid
 
 // Load a model from the registry
-let loader = XybridModelLoader.fromRegistry(modelId: "kokoro-82m")
+let loader = ModelLoader.fromRegistry(modelId: "kokoro-82m")
 let model = try loader.load()
 
 // Run text-to-speech
-let envelope = XybridEnvelope.text(text: "Hello from Xybrid!")
+let envelope = Envelope.text("Hello from Xybrid!")
 let result = try model.run(envelope: envelope)
 
 // result.audioBytes contains the generated speech audio
@@ -84,22 +84,21 @@ let result = try model.run(envelope: envelope)
 ```kotlin
 // build.gradle.kts
 dependencies {
-    implementation("ai.xybrid:xybrid-kotlin:0.1.0-alpha3")
+    implementation("ai.xybrid:xybrid-kotlin:0.1.0-beta4")
 }
 ```
 
 **Run inference**
 
 ```kotlin
-import ai.xybrid.XybridModelLoader
-import ai.xybrid.XybridEnvelope
+import ai.xybrid.*
 
 // Load a model from the registry
 val loader = XybridModelLoader.fromRegistry("kokoro-82m")
 val model = loader.load()
 
 // Run text-to-speech
-val envelope = XybridEnvelope.Text(text = "Hello from Xybrid!")
+val envelope = Envelope.text("Hello from Xybrid!")
 val result = model.run(envelope)
 
 // result.audioBytes contains the generated speech audio
@@ -113,17 +112,13 @@ val result = model.run(envelope)
 In Unity, go to **Window > Package Manager > + > Add package from git URL** and enter:
 
 ```
-https://github.com/xybrid-ai/xybrid.git?path=bindings/unity
+https://github.com/xybrid-ai/xybrid.git#upm
 ```
 
-Or add to `Packages/manifest.json`:
+Or pin a specific version:
 
-```json
-{
-  "dependencies": {
-    "ai.xybrid.sdk": "https://github.com/xybrid-ai/xybrid.git?path=bindings/unity"
-  }
-}
+```
+https://github.com/xybrid-ai/xybrid.git#upm/v0.1.0-beta4
 ```
 
 **Run inference**

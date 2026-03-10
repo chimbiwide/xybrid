@@ -30,7 +30,7 @@ classes:
           - { name: bundlePath, type: "String?" }
           - { name: modelDir, type: "String?" }
         return: XybridModelLoader
-        status: { dart: implemented, kotlin: implemented, swift: planned, csharp: implemented }
+        status: { dart: implemented, kotlin: planned, swift: planned, csharp: implemented }
       pipeline:
         params:
           - { name: yaml, type: "String?" }
@@ -76,21 +76,21 @@ classes:
     properties:
       modelId:
         type: String
-        status: { dart: implemented, kotlin: implemented, swift: implemented, csharp: implemented }
+        status: { dart: planned, kotlin: planned, swift: planned, csharp: implemented }
       voices:
         type: "List<VoiceInfo>?"
-        status: { dart: planned, kotlin: implemented, swift: planned, csharp: implemented }
+        status: { dart: planned, kotlin: implemented, swift: implemented, csharp: implemented }
       defaultVoice:
         type: "VoiceInfo?"
-        status: { dart: planned, kotlin: implemented, swift: planned, csharp: implemented }
+        status: { dart: planned, kotlin: partial, swift: partial, csharp: implemented }
       hasVoices:
         type: bool
-        status: { dart: planned, kotlin: implemented, swift: planned, csharp: implemented }
+        status: { dart: planned, kotlin: implemented, swift: implemented, csharp: implemented }
     methods:
       voice:
         params: [{ name: voiceId, type: String }]
         return: "VoiceInfo?"
-        status: { dart: planned, kotlin: implemented, swift: planned, csharp: implemented }
+        status: { dart: planned, kotlin: implemented, swift: implemented, csharp: implemented }
       run:
         async: true
         params:
@@ -105,7 +105,7 @@ classes:
           - { name: context, type: ConversationContext }
           - { name: config, type: "GenerationConfig?", default: "null" }
         return: XybridResult
-        status: { dart: implemented, kotlin: implemented, swift: implemented, csharp: implemented }
+        status: { dart: implemented, kotlin: planned, swift: planned, csharp: implemented }
       runStreaming:
         params:
           - { name: envelope, type: Envelope }
@@ -193,12 +193,12 @@ classes:
         status: { dart: implemented, kotlin: implemented, swift: implemented, csharp: implemented }
       embedding:
         params: [{ name: embedding, type: "List<double>" }]
-        status: { dart: implemented, kotlin: implemented, swift: planned, csharp: planned }
+        status: { dart: implemented, kotlin: implemented, swift: implemented, csharp: planned }
       textWithRole:
         params:
           - { name: text, type: String }
           - { name: role, type: MessageRole }
-        status: { dart: implemented, kotlin: planned, swift: planned, csharp: planned }
+        status: { dart: implemented, kotlin: planned, swift: planned, csharp: implemented }
 
   # -------------------------------------------------------------------
   # 6. VoiceInfo
@@ -209,19 +209,19 @@ classes:
     properties:
       id:
         type: String
-        status: { dart: planned, kotlin: implemented, swift: planned, csharp: implemented }
+        status: { dart: planned, kotlin: implemented, swift: implemented, csharp: implemented }
       name:
         type: String
-        status: { dart: planned, kotlin: implemented, swift: planned, csharp: implemented }
+        status: { dart: planned, kotlin: implemented, swift: implemented, csharp: implemented }
       gender:
         type: "String?"
-        status: { dart: planned, kotlin: implemented, swift: planned, csharp: implemented }
+        status: { dart: planned, kotlin: implemented, swift: implemented, csharp: implemented }
       language:
         type: "String?"
-        status: { dart: planned, kotlin: implemented, swift: planned, csharp: implemented }
+        status: { dart: planned, kotlin: implemented, swift: implemented, csharp: implemented }
       style:
         type: "String?"
-        status: { dart: planned, kotlin: implemented, swift: planned, csharp: implemented }
+        status: { dart: planned, kotlin: implemented, swift: implemented, csharp: implemented }
       isDefault:
         type: bool
         status: { dart: planned, kotlin: planned, swift: planned, csharp: planned }
@@ -242,7 +242,7 @@ classes:
         status: { dart: implemented, kotlin: implemented, swift: implemented, csharp: implemented }
       error:
         type: "String?"
-        status: { dart: implemented, kotlin: implemented, swift: implemented, csharp: implemented }
+        status: { dart: implemented, kotlin: planned, swift: planned, csharp: implemented }
       text:
         type: "String?"
         status: { dart: implemented, kotlin: implemented, swift: implemented, csharp: implemented }
@@ -254,16 +254,16 @@ classes:
         status: { dart: implemented, kotlin: implemented, swift: implemented, csharp: implemented }
       outputType:
         type: OutputType
-        status: { dart: planned, kotlin: implemented, swift: implemented, csharp: implemented }
+        status: { dart: planned, kotlin: planned, swift: planned, csharp: implemented }
       latencyMs:
         type: int
         status: { dart: implemented, kotlin: implemented, swift: implemented, csharp: implemented }
       modelId:
         type: String
-        status: { dart: planned, kotlin: implemented, swift: implemented, csharp: implemented }
+        status: { dart: planned, kotlin: planned, swift: planned, csharp: implemented }
       isFailure:
         type: bool
-        status: { dart: implemented, kotlin: implemented, swift: implemented, csharp: planned }
+        status: { dart: implemented, kotlin: implemented, swift: implemented, csharp: implemented }
       audioAsWav:
         type: "Uint8List?"
         status: { dart: implemented, kotlin: planned, swift: planned, csharp: planned }
@@ -274,45 +274,45 @@ classes:
   ConversationContext:
     type: class
     section: "8. Supporting Types"
-    status: { dart: implemented, kotlin: implemented, swift: implemented, csharp: implemented }
+    status: { dart: implemented, kotlin: planned, swift: planned, csharp: implemented }
 
   MessageRole:
     type: enum
     section: "8. Supporting Types"
     values: [system, user, assistant]
-    status: { dart: implemented, kotlin: implemented, swift: implemented, csharp: implemented }
+    status: { dart: implemented, kotlin: planned, swift: planned, csharp: implemented }
 
   GenerationConfig:
     type: data
     section: "8. Supporting Types"
-    status: { dart: implemented, kotlin: implemented, swift: planned, csharp: implemented }
+    status: { dart: implemented, kotlin: implemented, swift: implemented, csharp: implemented }
     properties:
       maxTokens:
         type: "int?"
-        status: { dart: implemented, kotlin: implemented, swift: planned, csharp: implemented }
+        status: { dart: implemented, kotlin: implemented, swift: implemented, csharp: implemented }
       temperature:
         type: "double?"
-        status: { dart: implemented, kotlin: implemented, swift: planned, csharp: implemented }
+        status: { dart: implemented, kotlin: implemented, swift: implemented, csharp: implemented }
       topP:
         type: "double?"
-        status: { dart: implemented, kotlin: implemented, swift: planned, csharp: implemented }
+        status: { dart: implemented, kotlin: implemented, swift: implemented, csharp: implemented }
       minP:
         type: "double?"
-        status: { dart: implemented, kotlin: implemented, swift: planned, csharp: implemented }
+        status: { dart: implemented, kotlin: implemented, swift: implemented, csharp: implemented }
       topK:
         type: "int?"
-        status: { dart: implemented, kotlin: implemented, swift: planned, csharp: implemented }
+        status: { dart: implemented, kotlin: implemented, swift: implemented, csharp: implemented }
       repetitionPenalty:
         type: "double?"
-        status: { dart: implemented, kotlin: implemented, swift: planned, csharp: implemented }
+        status: { dart: implemented, kotlin: implemented, swift: implemented, csharp: implemented }
       stopSequences:
         type: "List<String>?"
-        status: { dart: implemented, kotlin: implemented, swift: planned, csharp: implemented }
+        status: { dart: implemented, kotlin: implemented, swift: implemented, csharp: implemented }
     factories:
       greedy:
-        status: { dart: implemented, kotlin: implemented, swift: planned, csharp: planned }
+        status: { dart: implemented, kotlin: implemented, swift: planned, csharp: implemented }
       creative:
-        status: { dart: implemented, kotlin: implemented, swift: planned, csharp: planned }
+        status: { dart: implemented, kotlin: implemented, swift: planned, csharp: implemented }
 
   StreamToken:
     type: data

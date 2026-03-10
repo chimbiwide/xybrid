@@ -209,6 +209,60 @@ using (var context = new ConversationContext())
 
 ---
 
+## LLM Streaming
+
+Unity supports token-by-token streaming for LLM models via callbacks:
+
+```csharp
+// Check if the model supports streaming
+if (model.SupportsTokenStreaming)
+{
+    using (var envelope = Envelope.Text("Tell me a story about a brave knight."))
+    using (var result = model.RunStreaming(envelope, token =>
+    {
+        // Called for each token as it's generated
+        Debug.Log(token.Token);
+    }))
+    {
+        result.ThrowIfFailed();
+        Debug.Log($"Full response: {result.Text}");
+    }
+}
+```
+
+### Streaming with Conversation Context
+
+```csharp
+using (var context = new ConversationContext())
+{
+    context.SetSystem("You are a tavern keeper in a fantasy RPG.");
+
+    context.Push("What's on the menu today?", MessageRole.User);
+    using (var envelope = Envelope.Text("What's on the menu today?"))
+    using (var result = model.RunStreaming(envelope, context, token =>
+    {
+        Debug.Log(token.Token);  // Each token as it arrives
+    }))
+    {
+        result.ThrowIfFailed();
+        context.Push(result.Text, MessageRole.Assistant);
+    }
+}
+```
+
+### Convenience Streaming
+
+```csharp
+// Text-in, streaming text-out
+string response = model.RunStreamingText("Describe the dungeon entrance.", token =>
+{
+    // Update UI with each token
+    dialogueText.text += token.Token;
+});
+```
+
+---
+
 ## IDisposable Pattern
 
 All resource-holding classes implement `IDisposable`. Use `using` blocks to ensure cleanup:

@@ -110,7 +110,7 @@ object Xybrid {
 |--------|------|--------|-------|----|
 | `init()` | ✅ | ✅ | — | ✅ |
 | `setApiKey()` | ✅ | — | — | — |
-| `model()` | ✅ | ✅ | — | ✅ |
+| `model()` | ✅ | — | — | ✅ |
 | `pipeline()` | ✅ | — | — | — |
 | `isModelCached()` | ✅ | — | — | — |
 
@@ -243,13 +243,13 @@ class XybridModel {
 
 | Method | Dart | Kotlin | Swift | C# |
 |--------|------|--------|-------|----|
-| `modelId` | ✅ | ✅ | ✅ | ✅ |
-| `voices` | — | ✅ | — | ✅ |
-| `defaultVoice` | — | ✅ | — | ✅ |
-| `hasVoices` | — | ✅ | — | ✅ |
-| `voice()` | — | ✅ | — | ✅ |
+| `modelId` | — | — | — | ✅ |
+| `voices` | — | ✅ | ✅ | ✅ |
+| `defaultVoice` | — | 🚧 | 🚧 | ✅ |
+| `hasVoices` | — | ✅ | ✅ | ✅ |
+| `voice()` | — | ✅ | ✅ | ✅ |
 | `run()` | ✅ | ✅ | ✅ | ✅ |
-| `runWithContext()` | ✅ | ✅ | ✅ | ✅ |
+| `runWithContext()` | ✅ | — | — | ✅ |
 | `runStreaming()` | ✅ | — | — | ✅ |
 | `runStreamingWithContext()` | ✅ | — | — | ✅ |
 | `benchmark()` | — | — | — | — |
@@ -400,8 +400,8 @@ sealed class XybridEnvelope {
 | `text()` | ✅ | ✅ | ✅ | ✅ |
 | `text(voiceId, speed)` | ✅ | ✅ | ✅ | ✅ |
 | `audio()` | ✅ | ✅ | ✅ | ✅ |
-| `embedding()` | ✅ | ✅ | — | — |
-| `textWithRole()` | ✅ | — | — | — |
+| `embedding()` | ✅ | ✅ | ✅ | — |
+| `textWithRole()` | ✅ | — | — | ✅ |
 | `withRole()` | ✅ | — | — | — |
 
 ---
@@ -440,11 +440,11 @@ data class VoiceInfo(
 
 | Property | Dart | Kotlin | Swift | C# |
 |----------|------|--------|-------|----|
-| `id` | — | ✅ | — | ✅ |
-| `name` | — | ✅ | — | ✅ |
-| `gender` | — | ✅ | — | ✅ |
-| `language` | — | ✅ | — | ✅ |
-| `style` | — | ✅ | — | ✅ |
+| `id` | — | ✅ | ✅ | ✅ |
+| `name` | — | ✅ | ✅ | ✅ |
+| `gender` | — | ✅ | ✅ | ✅ |
+| `language` | — | ✅ | ✅ | ✅ |
+| `style` | — | ✅ | ✅ | ✅ |
 | `isDefault` | — | — | — | — |
 
 ### Usage Example
@@ -580,14 +580,14 @@ public enum OutputType { Text, Audio, Embedding, Unknown }
 | Property | Dart | Kotlin | Swift | C# |
 |----------|------|--------|-------|----|
 | `success` | ✅ | ✅ | ✅ | ✅ |
-| `error` | ✅ | ✅ | ✅ | ✅ |
+| `error` | ✅ | — | — | ✅ |
 | `text` | ✅ | ✅ | ✅ | ✅ |
 | `audioBytes` | ✅ | ✅ | ✅ | ✅ |
 | `embedding` | ✅ | ✅ | ✅ | ✅ |
-| `outputType` | — | ✅ | ✅ | ✅ |
+| `outputType` | — | — | — | ✅ |
 | `latencyMs` | ✅ | ✅ | ✅ | ✅ |
-| `modelId` | — | ✅ | ✅ | ✅ |
-| `isFailure` | ✅ | ✅ | ✅ | — |
+| `modelId` | — | — | — | ✅ |
+| `isFailure` | ✅ | ✅ | ✅ | ✅ |
 | `audioAsWav()` | ✅ | — | — | — |
 
 ---
@@ -685,9 +685,9 @@ final stream = model.runStreaming(
 
 | Type | Dart | Kotlin | Swift | C# |
 |------|------|--------|-------|----|
-| `ConversationContext` | ✅ | ✅ | ✅ | ✅ |
-| `MessageRole` | ✅ | ✅ | ✅ | ✅ |
-| `GenerationConfig` | ✅ | ✅ | — | ✅ |
+| `ConversationContext` | ✅ | — | — | ✅ |
+| `MessageRole` | ✅ | — | — | ✅ |
+| `GenerationConfig` | ✅ | ✅ | ✅ | ✅ |
 | `StreamToken` | ✅ | — | — | ✅ |
 
 ---

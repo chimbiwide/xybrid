@@ -152,10 +152,10 @@ A loaded model ready for inference.
 
 ```dart
 class XybridModel {
-  Future<XybridResult> run(XybridEnvelope envelope);
-  Future<XybridResult> runWithContext(XybridEnvelope envelope, ConversationContext context);
-  Stream<StreamToken> runStreaming(XybridEnvelope envelope);
-  Stream<StreamToken> runStreamingWithContext(XybridEnvelope envelope, ConversationContext context);
+  Future<XybridResult> run(XybridEnvelope envelope, {GenerationConfig? config});
+  Future<XybridResult> runWithContext(XybridEnvelope envelope, ConversationContext context, {GenerationConfig? config});
+  Stream<StreamToken> runStreaming(XybridEnvelope envelope, {GenerationConfig? config});
+  Stream<StreamToken> runStreamingWithContext(XybridEnvelope envelope, ConversationContext context, {GenerationConfig? config});
 }
 ```
 

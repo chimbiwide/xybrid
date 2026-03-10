@@ -215,15 +215,12 @@ stages:
 ### Flutter SDK
 
 ```dart
-final pipeline = await Xybrid.pipeline('assets/pipelines/voice-assistant.yaml');
+final pipeline = Xybrid.pipeline(filePath: 'assets/pipelines/voice-assistant.yaml');
 
-// Check input type
-if (pipeline.inputType.isAudio()) {
-  final result = await pipeline.run(
-    envelope: Envelope.audio(bytes: audioBytes),
-  );
-  print(result.text);
-}
+final result = await pipeline.run(
+  XybridEnvelope.audio(bytes: audioBytes, sampleRate: 16000),
+);
+print(result.text);
 ```
 
 ### Rust SDK
@@ -242,13 +239,11 @@ let result = pipeline.run(&input_envelope)?;
 Query pipeline properties:
 
 ```dart
-final pipeline = await Xybrid.pipeline('pipeline.yaml');
+final pipeline = Xybrid.pipeline(filePath: 'pipeline.yaml');
 
 pipeline.name;        // "Voice Assistant"
-pipeline.inputType;   // FfiPipelineInputType.audio
 pipeline.stageCount;  // 3
 pipeline.stageNames;  // ["whisper-tiny@1.0", "gpt-4o-mini", "kokoro-82m@0.1"]
-pipeline.isLoaded;    // true/false
 ```
 
 ## Lifecycle
@@ -259,14 +254,14 @@ pipeline.isLoaded;    // true/false
 4. **Unload** - Release resources
 
 ```dart
-// Load
-final pipeline = await Xybrid.pipeline('pipeline.yaml');
+// Load from YAML
+final pipeline = Xybrid.pipeline(yaml: yamlContent);
+
+// Or from file
+final pipeline = Xybrid.pipeline(filePath: 'pipeline.yaml');
 
 // Run
-final result = await pipeline.run(envelope: input);
-
-// Unload when done
-pipeline.unload();
+final result = await pipeline.run(XybridEnvelope.audio(bytes: audioBytes, sampleRate: 16000));
 ```
 
 ## Related

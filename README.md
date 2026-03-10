@@ -129,29 +129,29 @@ xybrid run kokoro-82m --input "Hello world" -o output.wav
 
 **Flutter:**
 ```dart
-final model = await Xybrid.model(modelId: 'kokoro-82m').load();
-final result = await model.run(envelope: Envelope.text(text: 'Hello world'));
+final model = await Xybrid.model('kokoro-82m').load();
+final result = await model.run(XybridEnvelope.text('Hello world'));
 // result → 24kHz WAV audio
 ```
 
 **Kotlin:**
 ```kotlin
-val model = Xybrid.model(modelId = "kokoro-82m").load()
-val result = model.run(envelope = XybridEnvelope.Text("Hello world"))
+val model = XybridModelLoader.fromRegistry("kokoro-82m").load()
+val result = model.run(Envelope.text("Hello world"))
 // result → 24kHz WAV audio
 ```
 
 **Swift:**
 ```swift
-let model = try Xybrid.model(modelId: "kokoro-82m").load()
-let result = try model.run(envelope: .text("Hello world"))
+let model = try ModelLoader.fromRegistry(modelId: "kokoro-82m").load()
+let result = try model.run(envelope: Envelope.text("Hello world"))
 // result → 24kHz WAV audio
 ```
 
 **Unity (C#):**
 ```csharp
-var model = Xybrid.Model(modelId: "kokoro-82m").Load();
-var result = model.Run(envelope: Envelope.Text("Hello world"));
+var model = XybridClient.LoadModel("kokoro-82m");
+var result = model.Run(Envelope.Text("Hello world"));
 // result → 24kHz WAV audio
 ```
 
@@ -182,30 +182,23 @@ xybrid run voice-assistant.yaml --input question.wav -o response.wav
 
 **Flutter:**
 ```dart
-final pipeline = await Xybrid.pipeline(yamlContent: yamlString).load();
-await pipeline.loadModels();
-final result = await pipeline.run(envelope: Envelope.audio(bytes: audioBytes));
+final pipeline = Xybrid.pipeline(yaml: yamlString);
+final result = await pipeline.run(XybridEnvelope.audio(bytes: audioBytes, sampleRate: 16000));
 ```
 
 **Kotlin:**
 ```kotlin
-val pipeline = Xybrid.pipeline(yamlContent = yamlString).load()
-pipeline.loadModels()
-val result = pipeline.run(envelope = XybridEnvelope.Audio(bytes = audioBytes))
+// Pipeline support coming soon — use single model loading for now
 ```
 
 **Swift:**
 ```swift
-let pipeline = try Xybrid.pipeline(yamlContent: yamlString).load()
-try pipeline.loadModels()
-let result = try pipeline.run(envelope: .audio(bytes: audioBytes))
+// Pipeline support coming soon — use single model loading for now
 ```
 
 **Unity (C#):**
 ```csharp
-var pipeline = Xybrid.Pipeline(yamlContent: yamlString).Load();
-pipeline.LoadModels();
-var result = pipeline.Run(envelope: Envelope.Audio(bytes: audioBytes));
+// Pipeline support coming soon — use single model loading for now
 ```
 
 **Rust:**
