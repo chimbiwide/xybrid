@@ -444,10 +444,20 @@ jobs:
           # Create the target plugin directory
           mkdir -p bindings/unity/Runtime/Plugins
 
+          # Map lowercase artifact names to Unity-standard capitalized directory names
+          declare -A PLATFORM_MAP=(
+            [macos]="macOS"
+            [windows]="Windows"
+            [linux]="Linux"
+            [android]="Android"
+            [ios]="iOS"
+          )
+
           # Move each platform's plugins into the correct directory
           for platform_dir in downloaded-plugins/unity-plugins-*/; do
-            PLATFORM=$(basename "$platform_dir" | sed 's/unity-plugins-//')
-            echo "Assembling $PLATFORM plugins..."
+            ARTIFACT_NAME=$(basename "$platform_dir" | sed 's/unity-plugins-//')
+            PLATFORM="${PLATFORM_MAP[$ARTIFACT_NAME]:-$ARTIFACT_NAME}"
+            echo "Assembling $ARTIFACT_NAME → $PLATFORM..."
             mkdir -p "bindings/unity/Runtime/Plugins/$PLATFORM"
             cp -r "$platform_dir"/* "bindings/unity/Runtime/Plugins/$PLATFORM/"
           done
@@ -524,9 +534,19 @@ jobs:
 
       - name: Assemble plugins into Unity package
         run: |
+          # Map lowercase artifact names to Unity-standard capitalized directory names
+          declare -A PLATFORM_MAP=(
+            [macos]="macOS"
+            [windows]="Windows"
+            [linux]="Linux"
+            [android]="Android"
+            [ios]="iOS"
+          )
+
           for platform_dir in downloaded-plugins/unity-plugins-*/; do
-            PLATFORM=$(basename "$platform_dir" | sed 's/unity-plugins-//')
-            echo "Assembling $PLATFORM plugins..."
+            ARTIFACT_NAME=$(basename "$platform_dir" | sed 's/unity-plugins-//')
+            PLATFORM="${PLATFORM_MAP[$ARTIFACT_NAME]:-$ARTIFACT_NAME}"
+            echo "Assembling $ARTIFACT_NAME → $PLATFORM..."
             mkdir -p "bindings/unity/Runtime/Plugins/$PLATFORM"
             cp -r "$platform_dir"/* "bindings/unity/Runtime/Plugins/$PLATFORM/"
           done
@@ -547,6 +567,9 @@ jobs:
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Increase post buffer for large native binary push (~200 MB)
+          git config http.postBuffer 524288000
 
           # Prepare package contents in a temp directory
           PACKAGE_DIR=$(mktemp -d)
@@ -572,6 +595,9 @@ jobs:
             git checkout --orphan upm
             git rm -rf . > /dev/null 2>&1 || true
           fi
+
+          # Clean untracked files from checkout (downloaded-plugins, etc.)
+          git clean -fd
 
           # Copy package contents to repo root (package.json at root for UPM)
           cp -r "$PACKAGE_DIR"/* .
