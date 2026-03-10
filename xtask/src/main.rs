@@ -1423,6 +1423,9 @@ fn build_xcframework(release: bool, version: &str) -> Result<()> {
     // macOS arm64 library (single arch, no lipo needed)
     let macos_arm64_lib = format!("target/{}/{}/libxybrid_uniffi.a", MACOS_ARM64, profile);
 
+    // Headers directory for the FFI module (needed for SPM binary target)
+    let headers_dir = "bindings/apple/Sources/xybrid_uniffiFFI/include";
+
     // Create XCFramework using xcodebuild with available slices
     println!("  Packaging XCFramework...");
     let mut xcbuild = Command::new("xcodebuild");
@@ -1432,17 +1435,29 @@ fn build_xcframework(release: bool, version: &str) -> Result<()> {
 
     if has_ios_device {
         let ios_arm64_lib = format!("target/{}/{}/libxybrid_uniffi.a", IOS_ARM64, profile);
-        xcbuild.arg("-library").arg(&ios_arm64_lib);
+        xcbuild
+            .arg("-library")
+            .arg(&ios_arm64_lib)
+            .arg("-headers")
+            .arg(headers_dir);
         arch_descriptions.push("iOS arm64");
     }
 
     if has_ios_sim_arm64 {
         let sim_arm64_lib = format!("target/{}/{}/libxybrid_uniffi.a", IOS_SIM_ARM64, profile);
-        xcbuild.arg("-library").arg(&sim_arm64_lib);
+        xcbuild
+            .arg("-library")
+            .arg(&sim_arm64_lib)
+            .arg("-headers")
+            .arg(headers_dir);
         arch_descriptions.push("iOS Simulator arm64");
     }
 
-    xcbuild.arg("-library").arg(&macos_arm64_lib);
+    xcbuild
+        .arg("-library")
+        .arg(&macos_arm64_lib)
+        .arg("-headers")
+        .arg(headers_dir);
     arch_descriptions.push("macOS arm64");
 
     xcbuild.arg("-output").arg(&xcframework_path);
@@ -1532,12 +1547,17 @@ fn build_xcframework_macos_only(release: bool, version: &str) -> Result<()> {
     // macOS arm64 library (single arch, no lipo needed)
     let macos_arm64_lib = format!("target/{}/{}/libxybrid_uniffi.a", MACOS_ARM64, profile);
 
+    // Headers directory for the FFI module (needed for SPM binary target)
+    let headers_dir = "bindings/apple/Sources/xybrid_uniffiFFI/include";
+
     // Create XCFramework with macOS only
     println!("  Packaging XCFramework...");
     let xcbuild_status = Command::new("xcodebuild")
         .arg("-create-xcframework")
         .arg("-library")
         .arg(&macos_arm64_lib)
+        .arg("-headers")
+        .arg(headers_dir)
         .arg("-output")
         .arg(&xcframework_path)
         .status()

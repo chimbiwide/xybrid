@@ -35,3 +35,14 @@ rust-project.json
 *.log
 
 *.wav
+
+# Xcode user data
+xcuserdata/
+*.xcuserstate
+*.xcworkspacedata
+
+# SwiftPM user data
+.swiftpm/xcode/xcuserdata/
+
+# Build artifacts - XCFrameworks (built by `cargo xtask build-xcframework`)
+bindings/apple/XCFrameworks/*.xcframework/

@@ -15,7 +15,7 @@ import Foundation
 public typealias ModelLoader = XybridModelLoader
 
 /// A loaded model ready for inference.
-/// Call `run(envelope:)` to execute inference on input data.
+/// Call `run(envelope:config:)` to execute inference on input data.
 public typealias Model = XybridModel
 
 /// Input data for model inference.
@@ -32,6 +32,9 @@ public typealias XybridSDKError = XybridError
 /// Voice metadata for TTS models.
 /// Describes a single voice available in a TTS model's voice catalog.
 public typealias VoiceInfo = XybridVoiceInfo
+
+/// Generation parameters for LLM inference (temperature, top_p, max_tokens, etc.).
+public typealias GenerationConfig = XybridGenerationConfig
 
 // MARK: - XybridResult Extensions
 
@@ -86,14 +89,32 @@ public extension XybridVoiceInfo {
 extension XybridError: LocalizedError {
     public var errorDescription: String? {
         switch self {
-        case .ModelNotFound(let modelId):
-            return "Model not found: \(modelId)"
-        case .InferenceFailed(let message):
+        case .ModelNotFound(let message):
+            return "Model not found: \(message)"
+        case .LoadError(let message):
+            return "Load error: \(message)"
+        case .InferenceError(let message):
             return "Inference failed: \(message)"
-        case .InvalidInput(let message):
-            return "Invalid input: \(message)"
+        case .StreamingNotSupported:
+            return "Streaming is not supported by this model"
+        case .NotLoaded:
+            return "Model not loaded"
+        case .ConfigError(let message):
+            return "Invalid configuration: \(message)"
+        case .NetworkError(let message):
+            return "Network error: \(message)"
         case .IoError(let message):
             return "I/O error: \(message)"
+        case .CacheError(let message):
+            return "Cache error: \(message)"
+        case .PipelineError(let message):
+            return "Pipeline error: \(message)"
+        case .CircuitOpen(let message):
+            return "Circuit breaker open: \(message)"
+        case .RateLimited(let retryAfterSecs):
+            return "Rate limited, retry after \(retryAfterSecs) seconds"
+        case .Timeout(let timeoutMs):
+            return "Request timeout after \(timeoutMs)ms"
         }
     }
 }

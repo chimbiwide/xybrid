@@ -1,24 +1,25 @@
-# Xybrid Apple Binding (Swift)
+# Xybrid Swift SDK (iOS/macOS)
 
-> **Status**: In Development - UniFFI bindings generated
+> **Status**: Beta - Pre-built XCFramework via SPM
 
-This directory contains the Swift package for Xybrid, providing native iOS and macOS support via UniFFI-generated bindings.
+Native iOS and macOS SDK for [Xybrid](https://github.com/xybrid-ai/xybrid), providing on-device ML inference via UniFFI-generated Swift bindings.
 
 ## Installation
 
 ### Swift Package Manager (Recommended)
 
-Add the Xybrid package to your Xcode project:
+Add Xybrid to your Xcode project:
 
 1. In Xcode, select **File > Add Package Dependencies...**
-2. Enter the repository URL: `https://github.com/xybrid-ai/xybrid`
-3. Select the package product **Xybrid**
+2. Enter: `https://github.com/xybrid-ai/xybrid`
+3. Set **Dependency Rule** to **Branch** → `swift`
+4. Select the **Xybrid** library product
 
 Or add it to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/xybrid-ai/xybrid", from: "0.1.0")
+    .package(url: "https://github.com/xybrid-ai/xybrid", branch: "swift")
 ]
 ```
 
@@ -95,16 +96,19 @@ let embeddingEnvelope = XybridEnvelope.embedding(
 
 ```
 apple/
-├── Package.swift                    # Swift Package manifest
+├── Package.swift                    # Swift Package manifest (local dev: path-based binaryTarget)
 ├── Sources/
-│   ├── Xybrid/                      # Swift source
-│   │   └── xybrid_uniffi.swift      # UniFFI-generated Swift bindings
-│   └── XybridFFI/                   # C FFI layer
-│       ├── include/
-│       │   └── xybrid_uniffiFFI.h   # C header for FFI
-│       └── xybrid_uniffiFFI.modulemap
-└── XCFrameworks/                    # Prebuilt binaries (future)
-    └── XybridFFI.xcframework
+│   └── Xybrid/                      # Swift source
+│       ├── Xybrid.swift             # Public API, extensions, type aliases
+│       └── xybrid_uniffi.swift      # UniFFI-generated Swift bindings (DO NOT EDIT)
+├── Sources/xybrid_uniffiFFI/        # C FFI headers (bundled into XCFramework)
+│   ├── include/
+│   │   ├── xybrid_uniffiFFI.h       # C header for FFI
+│   │   └── module.modulemap         # Clang module map
+│   └── shim.c                       # Placeholder (symbols from XCFramework)
+└── XCFrameworks/                    # Pre-built binary frameworks
+    ├── XybridFFI.xcframework/       # Latest build (for local dev)
+    └── XybridFFI-{version}.xcframework/  # Versioned copy
 ```
 
 ## Supported Platforms

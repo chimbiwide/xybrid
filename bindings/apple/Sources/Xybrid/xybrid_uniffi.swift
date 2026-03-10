@@ -310,6 +310,19 @@ fileprivate struct FfiConverterUInt32: FfiConverterPrimitive {
     }
 }
 
+fileprivate struct FfiConverterUInt64: FfiConverterPrimitive {
+    typealias FfiType = UInt64
+    typealias SwiftType = UInt64
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UInt64 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
 fileprivate struct FfiConverterFloat: FfiConverterPrimitive {
     typealias FfiType = Float
     typealias SwiftType = Float
@@ -412,8 +425,11 @@ fileprivate struct FfiConverterData: FfiConverterRustBuffer {
 
 
 public protocol XybridModelProtocol {
-    func modelId()   -> String
-    func run(envelope: XybridEnvelope)  throws -> XybridResult
+    func defaultVoiceId()   -> String?
+    func hasVoices()   -> Bool
+    func run(envelope: XybridEnvelope, config: XybridGenerationConfig?) async throws -> XybridResult
+    func voice(voiceId: String)   -> XybridVoiceInfo?
+    func voices()   -> [XybridVoiceInfo]?
     
 }
 
@@ -436,23 +452,65 @@ public class XybridModel: XybridModelProtocol {
     
     
 
-    public func modelId()  -> String {
-        return try!  FfiConverterString.lift(
+    public func defaultVoiceId()  -> String? {
+        return try!  FfiConverterOptionString.lift(
             try! 
     rustCall() {
     
-    uniffi_xybrid_uniffi_fn_method_xybridmodel_model_id(self.pointer, $0
+    uniffi_xybrid_uniffi_fn_method_xybridmodel_default_voice_id(self.pointer, $0
     )
 }
         )
     }
 
-    public func run(envelope: XybridEnvelope) throws -> XybridResult {
-        return try  FfiConverterTypeXybridResult.lift(
-            try 
-    rustCallWithError(FfiConverterTypeXybridError.lift) {
-    uniffi_xybrid_uniffi_fn_method_xybridmodel_run(self.pointer, 
-        FfiConverterTypeXybridEnvelope.lower(envelope),$0
+    public func hasVoices()  -> Bool {
+        return try!  FfiConverterBool.lift(
+            try! 
+    rustCall() {
+    
+    uniffi_xybrid_uniffi_fn_method_xybridmodel_has_voices(self.pointer, $0
+    )
+}
+        )
+    }
+
+    public func run(envelope: XybridEnvelope, config: XybridGenerationConfig?) async throws -> XybridResult {
+        return try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_xybrid_uniffi_fn_method_xybridmodel_run(
+                    self.pointer,
+                    FfiConverterTypeXybridEnvelope.lower(envelope),
+                    FfiConverterOptionTypeXybridGenerationConfig.lower(config)
+                )
+            },
+            pollFunc: ffi_xybrid_uniffi_rust_future_poll_rust_buffer,
+            completeFunc: ffi_xybrid_uniffi_rust_future_complete_rust_buffer,
+            freeFunc: ffi_xybrid_uniffi_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeXybridResult.lift,
+            errorHandler: FfiConverterTypeXybridError.lift
+        )
+    }
+
+    
+
+    public func voice(voiceId: String)  -> XybridVoiceInfo? {
+        return try!  FfiConverterOptionTypeXybridVoiceInfo.lift(
+            try! 
+    rustCall() {
+    
+    uniffi_xybrid_uniffi_fn_method_xybridmodel_voice(self.pointer, 
+        FfiConverterString.lower(voiceId),$0
+    )
+}
+        )
+    }
+
+    public func voices()  -> [XybridVoiceInfo]? {
+        return try!  FfiConverterOptionSequenceTypeXybridVoiceInfo.lift(
+            try! 
+    rustCall() {
+    
+    uniffi_xybrid_uniffi_fn_method_xybridmodel_voices(self.pointer, $0
     )
 }
         )
@@ -500,7 +558,7 @@ public func FfiConverterTypeXybridModel_lower(_ value: XybridModel) -> UnsafeMut
 
 
 public protocol XybridModelLoaderProtocol {
-    func load()  throws -> XybridModel
+    func load() async throws -> XybridModel
     
 }
 
@@ -541,15 +599,22 @@ public class XybridModelLoader: XybridModelLoaderProtocol {
     
     
 
-    public func load() throws -> XybridModel {
-        return try  FfiConverterTypeXybridModel.lift(
-            try 
-    rustCallWithError(FfiConverterTypeXybridError.lift) {
-    uniffi_xybrid_uniffi_fn_method_xybridmodelloader_load(self.pointer, $0
-    )
-}
+    public func load() async throws -> XybridModel {
+        return try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_xybrid_uniffi_fn_method_xybridmodelloader_load(
+                    self.pointer
+                )
+            },
+            pollFunc: ffi_xybrid_uniffi_rust_future_poll_pointer,
+            completeFunc: ffi_xybrid_uniffi_rust_future_complete_pointer,
+            freeFunc: ffi_xybrid_uniffi_rust_future_free_pointer,
+            liftFunc: FfiConverterTypeXybridModel.lift,
+            errorHandler: FfiConverterTypeXybridError.lift
         )
     }
+
+    
 }
 
 public struct FfiConverterTypeXybridModelLoader: FfiConverter {
@@ -592,24 +657,115 @@ public func FfiConverterTypeXybridModelLoader_lower(_ value: XybridModelLoader) 
 }
 
 
+public struct XybridGenerationConfig {
+    public var maxTokens: UInt32?
+    public var temperature: Float?
+    public var topP: Float?
+    public var minP: Float?
+    public var topK: UInt32?
+    public var repetitionPenalty: Float?
+    public var stopSequences: [String]?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(maxTokens: UInt32?, temperature: Float?, topP: Float?, minP: Float?, topK: UInt32?, repetitionPenalty: Float?, stopSequences: [String]?) {
+        self.maxTokens = maxTokens
+        self.temperature = temperature
+        self.topP = topP
+        self.minP = minP
+        self.topK = topK
+        self.repetitionPenalty = repetitionPenalty
+        self.stopSequences = stopSequences
+    }
+}
+
+
+extension XybridGenerationConfig: Equatable, Hashable {
+    public static func ==(lhs: XybridGenerationConfig, rhs: XybridGenerationConfig) -> Bool {
+        if lhs.maxTokens != rhs.maxTokens {
+            return false
+        }
+        if lhs.temperature != rhs.temperature {
+            return false
+        }
+        if lhs.topP != rhs.topP {
+            return false
+        }
+        if lhs.minP != rhs.minP {
+            return false
+        }
+        if lhs.topK != rhs.topK {
+            return false
+        }
+        if lhs.repetitionPenalty != rhs.repetitionPenalty {
+            return false
+        }
+        if lhs.stopSequences != rhs.stopSequences {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(maxTokens)
+        hasher.combine(temperature)
+        hasher.combine(topP)
+        hasher.combine(minP)
+        hasher.combine(topK)
+        hasher.combine(repetitionPenalty)
+        hasher.combine(stopSequences)
+    }
+}
+
+
+public struct FfiConverterTypeXybridGenerationConfig: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> XybridGenerationConfig {
+        return try XybridGenerationConfig(
+            maxTokens: FfiConverterOptionUInt32.read(from: &buf), 
+            temperature: FfiConverterOptionFloat.read(from: &buf), 
+            topP: FfiConverterOptionFloat.read(from: &buf), 
+            minP: FfiConverterOptionFloat.read(from: &buf), 
+            topK: FfiConverterOptionUInt32.read(from: &buf), 
+            repetitionPenalty: FfiConverterOptionFloat.read(from: &buf), 
+            stopSequences: FfiConverterOptionSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: XybridGenerationConfig, into buf: inout [UInt8]) {
+        FfiConverterOptionUInt32.write(value.maxTokens, into: &buf)
+        FfiConverterOptionFloat.write(value.temperature, into: &buf)
+        FfiConverterOptionFloat.write(value.topP, into: &buf)
+        FfiConverterOptionFloat.write(value.minP, into: &buf)
+        FfiConverterOptionUInt32.write(value.topK, into: &buf)
+        FfiConverterOptionFloat.write(value.repetitionPenalty, into: &buf)
+        FfiConverterOptionSequenceString.write(value.stopSequences, into: &buf)
+    }
+}
+
+
+public func FfiConverterTypeXybridGenerationConfig_lift(_ buf: RustBuffer) throws -> XybridGenerationConfig {
+    return try FfiConverterTypeXybridGenerationConfig.lift(buf)
+}
+
+public func FfiConverterTypeXybridGenerationConfig_lower(_ value: XybridGenerationConfig) -> RustBuffer {
+    return FfiConverterTypeXybridGenerationConfig.lower(value)
+}
+
+
 public struct XybridResult {
     public var success: Bool
-    public var error: String?
-    public var outputType: String
     public var text: String?
-    public var embedding: [Float]?
     public var audioBytes: Data?
+    public var embedding: [Float]?
     public var latencyMs: UInt32
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(success: Bool, error: String?, outputType: String, text: String?, embedding: [Float]?, audioBytes: Data?, latencyMs: UInt32) {
+    public init(success: Bool, text: String?, audioBytes: Data?, embedding: [Float]?, latencyMs: UInt32) {
         self.success = success
-        self.error = error
-        self.outputType = outputType
         self.text = text
-        self.embedding = embedding
         self.audioBytes = audioBytes
+        self.embedding = embedding
         self.latencyMs = latencyMs
     }
 }
@@ -620,19 +776,13 @@ extension XybridResult: Equatable, Hashable {
         if lhs.success != rhs.success {
             return false
         }
-        if lhs.error != rhs.error {
-            return false
-        }
-        if lhs.outputType != rhs.outputType {
-            return false
-        }
         if lhs.text != rhs.text {
             return false
         }
-        if lhs.embedding != rhs.embedding {
+        if lhs.audioBytes != rhs.audioBytes {
             return false
         }
-        if lhs.audioBytes != rhs.audioBytes {
+        if lhs.embedding != rhs.embedding {
             return false
         }
         if lhs.latencyMs != rhs.latencyMs {
@@ -643,11 +793,9 @@ extension XybridResult: Equatable, Hashable {
 
     public func hash(into hasher: inout Hasher) {
         hasher.combine(success)
-        hasher.combine(error)
-        hasher.combine(outputType)
         hasher.combine(text)
-        hasher.combine(embedding)
         hasher.combine(audioBytes)
+        hasher.combine(embedding)
         hasher.combine(latencyMs)
     }
 }
@@ -657,22 +805,18 @@ public struct FfiConverterTypeXybridResult: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> XybridResult {
         return try XybridResult(
             success: FfiConverterBool.read(from: &buf), 
-            error: FfiConverterOptionString.read(from: &buf), 
-            outputType: FfiConverterString.read(from: &buf), 
             text: FfiConverterOptionString.read(from: &buf), 
-            embedding: FfiConverterOptionSequenceFloat.read(from: &buf), 
             audioBytes: FfiConverterOptionData.read(from: &buf), 
+            embedding: FfiConverterOptionSequenceFloat.read(from: &buf), 
             latencyMs: FfiConverterUInt32.read(from: &buf)
         )
     }
 
     public static func write(_ value: XybridResult, into buf: inout [UInt8]) {
         FfiConverterBool.write(value.success, into: &buf)
-        FfiConverterOptionString.write(value.error, into: &buf)
-        FfiConverterString.write(value.outputType, into: &buf)
         FfiConverterOptionString.write(value.text, into: &buf)
-        FfiConverterOptionSequenceFloat.write(value.embedding, into: &buf)
         FfiConverterOptionData.write(value.audioBytes, into: &buf)
+        FfiConverterOptionSequenceFloat.write(value.embedding, into: &buf)
         FfiConverterUInt32.write(value.latencyMs, into: &buf)
     }
 }
@@ -684,6 +828,85 @@ public func FfiConverterTypeXybridResult_lift(_ buf: RustBuffer) throws -> Xybri
 
 public func FfiConverterTypeXybridResult_lower(_ value: XybridResult) -> RustBuffer {
     return FfiConverterTypeXybridResult.lower(value)
+}
+
+
+public struct XybridVoiceInfo {
+    public var id: String
+    public var name: String
+    public var gender: String?
+    public var language: String?
+    public var style: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, name: String, gender: String?, language: String?, style: String?) {
+        self.id = id
+        self.name = name
+        self.gender = gender
+        self.language = language
+        self.style = style
+    }
+}
+
+
+extension XybridVoiceInfo: Equatable, Hashable {
+    public static func ==(lhs: XybridVoiceInfo, rhs: XybridVoiceInfo) -> Bool {
+        if lhs.id != rhs.id {
+            return false
+        }
+        if lhs.name != rhs.name {
+            return false
+        }
+        if lhs.gender != rhs.gender {
+            return false
+        }
+        if lhs.language != rhs.language {
+            return false
+        }
+        if lhs.style != rhs.style {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+        hasher.combine(name)
+        hasher.combine(gender)
+        hasher.combine(language)
+        hasher.combine(style)
+    }
+}
+
+
+public struct FfiConverterTypeXybridVoiceInfo: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> XybridVoiceInfo {
+        return try XybridVoiceInfo(
+            id: FfiConverterString.read(from: &buf), 
+            name: FfiConverterString.read(from: &buf), 
+            gender: FfiConverterOptionString.read(from: &buf), 
+            language: FfiConverterOptionString.read(from: &buf), 
+            style: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: XybridVoiceInfo, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterOptionString.write(value.gender, into: &buf)
+        FfiConverterOptionString.write(value.language, into: &buf)
+        FfiConverterOptionString.write(value.style, into: &buf)
+    }
+}
+
+
+public func FfiConverterTypeXybridVoiceInfo_lift(_ buf: RustBuffer) throws -> XybridVoiceInfo {
+    return try FfiConverterTypeXybridVoiceInfo.lift(buf)
+}
+
+public func FfiConverterTypeXybridVoiceInfo_lower(_ value: XybridVoiceInfo) -> RustBuffer {
+    return FfiConverterTypeXybridVoiceInfo.lower(value)
 }
 
 // Note that we don't yet support `indirect` for enums.
@@ -766,10 +989,19 @@ public enum XybridError {
 
     
     
-    case ModelNotFound(modelId: String)
-    case InferenceFailed(message: String)
-    case InvalidInput(message: String)
+    case ModelNotFound(message: String)
+    case LoadError(message: String)
+    case InferenceError(message: String)
+    case StreamingNotSupported
+    case NotLoaded
+    case ConfigError(message: String)
+    case NetworkError(message: String)
     case IoError(message: String)
+    case CacheError(message: String)
+    case PipelineError(message: String)
+    case CircuitOpen(message: String)
+    case RateLimited(retryAfterSecs: UInt64)
+    case Timeout(timeoutMs: UInt64)
 
     fileprivate static func uniffiErrorHandler(_ error: RustBuffer) throws -> Error {
         return try FfiConverterTypeXybridError.lift(error)
@@ -788,16 +1020,39 @@ public struct FfiConverterTypeXybridError: FfiConverterRustBuffer {
 
         
         case 1: return .ModelNotFound(
-            modelId: try FfiConverterString.read(from: &buf)
-            )
-        case 2: return .InferenceFailed(
             message: try FfiConverterString.read(from: &buf)
             )
-        case 3: return .InvalidInput(
+        case 2: return .LoadError(
             message: try FfiConverterString.read(from: &buf)
             )
-        case 4: return .IoError(
+        case 3: return .InferenceError(
             message: try FfiConverterString.read(from: &buf)
+            )
+        case 4: return .StreamingNotSupported
+        case 5: return .NotLoaded
+        case 6: return .ConfigError(
+            message: try FfiConverterString.read(from: &buf)
+            )
+        case 7: return .NetworkError(
+            message: try FfiConverterString.read(from: &buf)
+            )
+        case 8: return .IoError(
+            message: try FfiConverterString.read(from: &buf)
+            )
+        case 9: return .CacheError(
+            message: try FfiConverterString.read(from: &buf)
+            )
+        case 10: return .PipelineError(
+            message: try FfiConverterString.read(from: &buf)
+            )
+        case 11: return .CircuitOpen(
+            message: try FfiConverterString.read(from: &buf)
+            )
+        case 12: return .RateLimited(
+            retryAfterSecs: try FfiConverterUInt64.read(from: &buf)
+            )
+        case 13: return .Timeout(
+            timeoutMs: try FfiConverterUInt64.read(from: &buf)
             )
 
          default: throw UniffiInternalError.unexpectedEnumCase
@@ -811,24 +1066,67 @@ public struct FfiConverterTypeXybridError: FfiConverterRustBuffer {
 
         
         
-        case let .ModelNotFound(modelId):
+        case let .ModelNotFound(message):
             writeInt(&buf, Int32(1))
-            FfiConverterString.write(modelId, into: &buf)
+            FfiConverterString.write(message, into: &buf)
             
         
-        case let .InferenceFailed(message):
+        case let .LoadError(message):
             writeInt(&buf, Int32(2))
             FfiConverterString.write(message, into: &buf)
             
         
-        case let .InvalidInput(message):
+        case let .InferenceError(message):
             writeInt(&buf, Int32(3))
             FfiConverterString.write(message, into: &buf)
             
         
-        case let .IoError(message):
+        case .StreamingNotSupported:
             writeInt(&buf, Int32(4))
+        
+        
+        case .NotLoaded:
+            writeInt(&buf, Int32(5))
+        
+        
+        case let .ConfigError(message):
+            writeInt(&buf, Int32(6))
             FfiConverterString.write(message, into: &buf)
+            
+        
+        case let .NetworkError(message):
+            writeInt(&buf, Int32(7))
+            FfiConverterString.write(message, into: &buf)
+            
+        
+        case let .IoError(message):
+            writeInt(&buf, Int32(8))
+            FfiConverterString.write(message, into: &buf)
+            
+        
+        case let .CacheError(message):
+            writeInt(&buf, Int32(9))
+            FfiConverterString.write(message, into: &buf)
+            
+        
+        case let .PipelineError(message):
+            writeInt(&buf, Int32(10))
+            FfiConverterString.write(message, into: &buf)
+            
+        
+        case let .CircuitOpen(message):
+            writeInt(&buf, Int32(11))
+            FfiConverterString.write(message, into: &buf)
+            
+        
+        case let .RateLimited(retryAfterSecs):
+            writeInt(&buf, Int32(12))
+            FfiConverterUInt64.write(retryAfterSecs, into: &buf)
+            
+        
+        case let .Timeout(timeoutMs):
+            writeInt(&buf, Int32(13))
+            FfiConverterUInt64.write(timeoutMs, into: &buf)
             
         }
     }
@@ -838,6 +1136,48 @@ public struct FfiConverterTypeXybridError: FfiConverterRustBuffer {
 extension XybridError: Equatable, Hashable {}
 
 extension XybridError: Error { }
+
+fileprivate struct FfiConverterOptionUInt32: FfiConverterRustBuffer {
+    typealias SwiftType = UInt32?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterUInt32.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterUInt32.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+fileprivate struct FfiConverterOptionFloat: FfiConverterRustBuffer {
+    typealias SwiftType = Float?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterFloat.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterFloat.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
 
 fileprivate struct FfiConverterOptionDouble: FfiConverterRustBuffer {
     typealias SwiftType = Double?
@@ -902,6 +1242,48 @@ fileprivate struct FfiConverterOptionData: FfiConverterRustBuffer {
     }
 }
 
+fileprivate struct FfiConverterOptionTypeXybridGenerationConfig: FfiConverterRustBuffer {
+    typealias SwiftType = XybridGenerationConfig?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeXybridGenerationConfig.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeXybridGenerationConfig.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+fileprivate struct FfiConverterOptionTypeXybridVoiceInfo: FfiConverterRustBuffer {
+    typealias SwiftType = XybridVoiceInfo?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeXybridVoiceInfo.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeXybridVoiceInfo.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
 fileprivate struct FfiConverterOptionSequenceFloat: FfiConverterRustBuffer {
     typealias SwiftType = [Float]?
 
@@ -918,6 +1300,48 @@ fileprivate struct FfiConverterOptionSequenceFloat: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterSequenceFloat.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+fileprivate struct FfiConverterOptionSequenceString: FfiConverterRustBuffer {
+    typealias SwiftType = [String]?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterSequenceString.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterSequenceString.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+fileprivate struct FfiConverterOptionSequenceTypeXybridVoiceInfo: FfiConverterRustBuffer {
+    typealias SwiftType = [XybridVoiceInfo]?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterSequenceTypeXybridVoiceInfo.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterSequenceTypeXybridVoiceInfo.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -945,6 +1369,121 @@ fileprivate struct FfiConverterSequenceFloat: FfiConverterRustBuffer {
     }
 }
 
+fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
+    typealias SwiftType = [String]
+
+    public static func write(_ value: [String], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterString.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [String] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [String]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterString.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+fileprivate struct FfiConverterSequenceTypeXybridVoiceInfo: FfiConverterRustBuffer {
+    typealias SwiftType = [XybridVoiceInfo]
+
+    public static func write(_ value: [XybridVoiceInfo], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeXybridVoiceInfo.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [XybridVoiceInfo] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [XybridVoiceInfo]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeXybridVoiceInfo.read(from: &buf))
+        }
+        return seq
+    }
+}
+private let UNIFFI_RUST_FUTURE_POLL_READY: Int8 = 0
+private let UNIFFI_RUST_FUTURE_POLL_MAYBE_READY: Int8 = 1
+
+fileprivate func uniffiRustCallAsync<F, T>(
+    rustFutureFunc: () -> UnsafeMutableRawPointer,
+    pollFunc: (UnsafeMutableRawPointer, UnsafeMutableRawPointer) -> (),
+    completeFunc: (UnsafeMutableRawPointer, UnsafeMutablePointer<RustCallStatus>) -> F,
+    freeFunc: (UnsafeMutableRawPointer) -> (),
+    liftFunc: (F) throws -> T,
+    errorHandler: ((RustBuffer) throws -> Error)?
+) async throws -> T {
+    // Make sure to call uniffiEnsureInitialized() since future creation doesn't have a
+    // RustCallStatus param, so doesn't use makeRustCall()
+    uniffiEnsureInitialized()
+    let rustFuture = rustFutureFunc()
+    defer {
+        freeFunc(rustFuture)
+    }
+    var pollResult: Int8;
+    repeat {
+        pollResult = await withUnsafeContinuation {
+            pollFunc(rustFuture, ContinuationHolder($0).toOpaque())
+        }
+    } while pollResult != UNIFFI_RUST_FUTURE_POLL_READY
+
+    return try liftFunc(makeRustCall(
+        { completeFunc(rustFuture, $0) },
+        errorHandler: errorHandler
+    ))
+}
+
+// Callback handlers for an async calls.  These are invoked by Rust when the future is ready.  They
+// lift the return value or error and resume the suspended function.
+fileprivate func uniffiFutureContinuationCallback(ptr: UnsafeMutableRawPointer, pollResult: Int8) {
+    ContinuationHolder.fromOpaque(ptr).resume(pollResult)
+}
+
+// Wraps UnsafeContinuation in a class so that we can use reference counting when passing it across
+// the FFI
+fileprivate class ContinuationHolder {
+    let continuation: UnsafeContinuation<Int8, Never>
+
+    init(_ continuation: UnsafeContinuation<Int8, Never>) {
+        self.continuation = continuation
+    }
+
+    func resume(_ pollResult: Int8) {
+        self.continuation.resume(returning: pollResult)
+    }
+
+    func toOpaque() -> UnsafeMutableRawPointer {
+        return Unmanaged<ContinuationHolder>.passRetained(self).toOpaque()
+    }
+
+    static func fromOpaque(_ ptr: UnsafeRawPointer) -> ContinuationHolder {
+        return Unmanaged<ContinuationHolder>.fromOpaque(ptr).takeRetainedValue()
+    }
+}
+
+fileprivate func uniffiInitContinuationCallback() {
+    ffi_xybrid_uniffi_rust_future_continuation_callback_set(uniffiFutureContinuationCallback)
+}
+
+public func initSdkCacheDir(cacheDir: String)  {
+    try! rustCall() {
+    uniffi_xybrid_uniffi_fn_func_init_sdk_cache_dir(
+        FfiConverterString.lower(cacheDir),$0)
+}
+}
+
+
+
 private enum InitializationResult {
     case ok
     case contractVersionMismatch
@@ -960,13 +1499,25 @@ private var initializationResult: InitializationResult {
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
-    if (uniffi_xybrid_uniffi_checksum_method_xybridmodel_model_id() != 24415) {
+    if (uniffi_xybrid_uniffi_checksum_func_init_sdk_cache_dir() != 59754) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_xybrid_uniffi_checksum_method_xybridmodel_run() != 61096) {
+    if (uniffi_xybrid_uniffi_checksum_method_xybridmodel_default_voice_id() != 623) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_xybrid_uniffi_checksum_method_xybridmodelloader_load() != 56505) {
+    if (uniffi_xybrid_uniffi_checksum_method_xybridmodel_has_voices() != 11425) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_xybrid_uniffi_checksum_method_xybridmodel_run() != 27599) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_xybrid_uniffi_checksum_method_xybridmodel_voice() != 56923) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_xybrid_uniffi_checksum_method_xybridmodel_voices() != 2150) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_xybrid_uniffi_checksum_method_xybridmodelloader_load() != 43654) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_xybrid_uniffi_checksum_constructor_xybridmodelloader_from_bundle() != 7105) {
@@ -976,6 +1527,7 @@ private var initializationResult: InitializationResult {
         return InitializationResult.apiChecksumMismatch
     }
 
+    uniffiInitContinuationCallback()
     return InitializationResult.ok
 }
 

@@ -65,9 +65,15 @@ typedef void (*UniFfiRustFutureContinuation)(void * _Nonnull, int8_t);
 // Scaffolding functions
 void uniffi_xybrid_uniffi_fn_free_xybridmodel(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
 );
-RustBuffer uniffi_xybrid_uniffi_fn_method_xybridmodel_model_id(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+RustBuffer uniffi_xybrid_uniffi_fn_method_xybridmodel_default_voice_id(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
 );
-RustBuffer uniffi_xybrid_uniffi_fn_method_xybridmodel_run(void*_Nonnull ptr, RustBuffer envelope, RustCallStatus *_Nonnull out_status
+int8_t uniffi_xybrid_uniffi_fn_method_xybridmodel_has_voices(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+void* _Nonnull uniffi_xybrid_uniffi_fn_method_xybridmodel_run(void*_Nonnull ptr, RustBuffer envelope, RustBuffer config
+);
+RustBuffer uniffi_xybrid_uniffi_fn_method_xybridmodel_voice(void*_Nonnull ptr, RustBuffer voice_id, RustCallStatus *_Nonnull out_status
+);
+RustBuffer uniffi_xybrid_uniffi_fn_method_xybridmodel_voices(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
 );
 void uniffi_xybrid_uniffi_fn_free_xybridmodelloader(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
 );
@@ -75,7 +81,9 @@ void*_Nonnull uniffi_xybrid_uniffi_fn_constructor_xybridmodelloader_from_bundle(
 );
 void*_Nonnull uniffi_xybrid_uniffi_fn_constructor_xybridmodelloader_from_registry(RustBuffer model_id, RustCallStatus *_Nonnull out_status
 );
-void*_Nonnull uniffi_xybrid_uniffi_fn_method_xybridmodelloader_load(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+void* _Nonnull uniffi_xybrid_uniffi_fn_method_xybridmodelloader_load(void*_Nonnull ptr
+);
+void uniffi_xybrid_uniffi_fn_func_init_sdk_cache_dir(RustBuffer cache_dir, RustCallStatus *_Nonnull out_status
 );
 RustBuffer ffi_xybrid_uniffi_rustbuffer_alloc(int32_t size, RustCallStatus *_Nonnull out_status
 );
@@ -191,10 +199,22 @@ void ffi_xybrid_uniffi_rust_future_free_void(void* _Nonnull handle
 );
 void ffi_xybrid_uniffi_rust_future_complete_void(void* _Nonnull handle, RustCallStatus *_Nonnull out_status
 );
-uint16_t uniffi_xybrid_uniffi_checksum_method_xybridmodel_model_id(void
+uint16_t uniffi_xybrid_uniffi_checksum_func_init_sdk_cache_dir(void
+    
+);
+uint16_t uniffi_xybrid_uniffi_checksum_method_xybridmodel_default_voice_id(void
+    
+);
+uint16_t uniffi_xybrid_uniffi_checksum_method_xybridmodel_has_voices(void
     
 );
 uint16_t uniffi_xybrid_uniffi_checksum_method_xybridmodel_run(void
+    
+);
+uint16_t uniffi_xybrid_uniffi_checksum_method_xybridmodel_voice(void
+    
+);
+uint16_t uniffi_xybrid_uniffi_checksum_method_xybridmodel_voices(void
     
 );
 uint16_t uniffi_xybrid_uniffi_checksum_method_xybridmodelloader_load(void

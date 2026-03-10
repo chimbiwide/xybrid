@@ -3,13 +3,14 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 56;
+	objectVersion = 60;
 	objects = {
 
 /* Begin PBXBuildFile section */
 		3B1A00012B0000010000000A /* XybridExampleApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B1A00002B0000000000000A /* XybridExampleApp.swift */; };
 		3B1A00022B0000020000000A /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B1A00012B0000010000000B /* ContentView.swift */; };
 		3B1A00032B0000030000000A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 3B1A00022B0000020000000B /* Assets.xcassets */; };
+		E3C7BD052F600DA900A10DD1 /* Xybrid in Frameworks */ = {isa = PBXBuildFile; productRef = E3C7BD042F600DA900A10DD1 /* Xybrid */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -25,13 +26,14 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				E3C7BD052F600DA900A10DD1 /* Xybrid in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		3B1A00002B0000000000000C /* = Begin */ = {
+		3B1A00002B0000000000000C = {
 			isa = PBXGroup;
 			children = (
 				3B1A00012B0000010000000C /* XybridExample */,
@@ -102,6 +104,9 @@
 				Base,
 			);
 			mainGroup = 3B1A00002B0000000000000C;
+			packageReferences = (
+				E3C7BD032F600DA900A10DD1 /* XCLocalSwiftPackageReference "../../bindings/apple" */,
+			);
 			productRefGroup = 3B1A00022B0000020000000C /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -261,7 +266,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = CPVMT4DS8N;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = XybridExample/Info.plist;
@@ -290,7 +295,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = CPVMT4DS8N;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = XybridExample/Info.plist;
@@ -334,6 +339,20 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		E3C7BD032F600DA900A10DD1 /* XCLocalSwiftPackageReference "../../bindings/apple" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../../bindings/apple;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		E3C7BD042F600DA900A10DD1 /* Xybrid */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = Xybrid;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 3B1A00002B0000000000000B /* Project object */;
 }

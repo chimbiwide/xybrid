@@ -19,15 +19,24 @@ let package = Package(
         // Main Swift target with public API
         .target(
             name: "Xybrid",
-            dependencies: ["xybrid_uniffiFFI"],
-            path: "Sources/Xybrid"
+            dependencies: ["XybridFFI"],
+            path: "Sources/Xybrid",
+            linkerSettings: [
+                .linkedLibrary("c++"),
+                .linkedFramework("Metal"),
+                .linkedFramework("MetalPerformanceShaders"),
+                .linkedFramework("MetalPerformanceShadersGraph"),
+                .linkedFramework("CoreML"),
+                .linkedFramework("Accelerate"),
+                .linkedFramework("Security"),
+            ]
         ),
-        // FFI target for UniFFI-generated C bindings
-        // The module name must match what the generated Swift code imports
-        .target(
-            name: "xybrid_uniffiFFI",
-            path: "Sources/xybrid_uniffiFFI",
-            publicHeadersPath: "include"
+        // Pre-built XCFramework containing the Rust FFI static library + headers
+        // For local development: build with `cargo xtask build-xcframework`
+        // For distribution: replaced with URL-based binaryTarget in release tags
+        .binaryTarget(
+            name: "XybridFFI",
+            path: "XCFrameworks/XybridFFI.xcframework"
         )
     ]
 )

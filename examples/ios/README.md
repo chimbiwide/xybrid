@@ -4,12 +4,11 @@ A native iOS example app demonstrating Xybrid SDK integration using SwiftUI.
 
 ## Features
 
-- **SDK Initialization**: Shows proper async SDK startup flow
-- **Model Loading**: Text field for model ID, load button with progress indicator
-- **Text-to-Speech Inference**: Run TTS inference with text input
-- **Result Display**: Shows inference result, latency metrics, and play button
+- **SDK Initialization**: Cache directory setup via `initSdkCacheDir()`
+- **Model Loading**: Downloads models from the xybrid registry with async/await
+- **Text-to-Speech**: Run TTS inference with voice selection
+- **Audio Playback**: Play generated audio via AVAudioPlayer
 - **Error Handling**: User-friendly error messages with retry capability
-- **Swift Concurrency**: Proper async/await usage throughout
 
 ## Prerequisites
 
@@ -21,65 +20,21 @@ A native iOS example app demonstrating Xybrid SDK integration using SwiftUI.
 
 ## Quick Start
 
-### 1. Open in Xcode
-
-```bash
-open XybridExample.xcodeproj
-```
-
-Or double-click `XybridExample.xcodeproj` in Finder.
-
-### 2. Build and Run
-
-1. Select an iOS Simulator or device
-2. Press **Cmd+R** to build and run
-
-The example app will launch with:
-1. Welcome screen with "Initialize SDK" button
-2. After initialization, an inference demo screen with:
-   - Model ID input (default: `kokoro-82m`)
-   - "Load Model" button
-   - Text input for TTS
-   - "Run Inference" button
-   - Result display with latency and play button
-
-## Building with XCFramework (Full SDK Functionality)
-
-To enable actual SDK functionality (model loading, inference), you need to build the XCFramework:
-
-### 1. Install Rust Targets
+### 1. Build the XCFramework
 
 ```bash
 # From the xybrid repo root
-cd ../../..  # Navigate to xybrid repo root
-cargo xtask setup-targets
-
-# Or manually:
-rustup target add aarch64-apple-ios        # iOS device (arm64)
-rustup target add aarch64-apple-ios-sim    # iOS simulator (arm64)
-rustup target add x86_64-apple-ios         # iOS simulator (x86_64)
+rustup target add aarch64-apple-ios aarch64-apple-ios-sim aarch64-apple-darwin
+cargo xtask build-xcframework --release
 ```
 
-### 2. Build XCFramework
+### 2. Open in Xcode
 
 ```bash
-# From xybrid repo root
-cargo xtask build-xcframework
+open examples/ios/XybridExample.xcodeproj
 ```
 
-### 3. Enable Xybrid Import
-
-Edit `XybridExample/ContentView.swift`:
-
-```swift
-// Change this:
-// import Xybrid
-
-// To this:
-import Xybrid
-```
-
-### 4. Add Xybrid Package Dependency
+### 3. Add Xybrid Package Dependency
 
 In Xcode:
 
@@ -88,9 +43,19 @@ In Xcode:
 3. Click **+** and add local package: `../../bindings/apple`
 4. Select **Xybrid** library
 
-### 5. Rebuild
+### 4. Build and Run
 
-Press **Cmd+R** to build and run with full SDK functionality.
+1. Select an iOS device (arm64) — simulator requires separate ORT build
+2. Press **Cmd+R** to build and run
+
+The app will:
+1. Show a welcome screen with "Initialize SDK" button
+2. After init, show inference demo with:
+   - Model ID input (default: `kokoro-82m`)
+   - Voice picker (populated after model loads)
+   - Text input for TTS
+   - "Run Inference" button
+   - Audio playback of generated speech
 
 ## Project Structure
 
@@ -99,148 +64,78 @@ ios/
 ├── XybridExample.xcodeproj/     # Xcode project
 ├── XybridExample/
 │   ├── XybridExampleApp.swift   # App entry point
-│   ├── ContentView.swift        # Main UI with inference demo
+│   ├── ContentView.swift        # Main UI with real SDK integration
 │   ├── Assets.xcassets/         # App icons and colors
 │   └── Info.plist               # App configuration
 └── README.md                    # This file
 ```
 
-## SDK Usage Examples
+## SDK Usage Patterns
 
-### Initialize SDK
+### Initialize
 
 ```swift
 import Xybrid
 
-// Using Swift async/await
-Task {
-    do {
-        try await Xybrid.initialize()
-        print("SDK ready!")
-    } catch {
-        print("Init failed: \(error.localizedDescription)")
-    }
+let cacheDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)
+    .first!.appendingPathComponent("xybrid").path
+initSdkCacheDir(cacheDir: cacheDir)
+```
+
+### Load Model
+
+```swift
+let loader = XybridModelLoader.fromRegistry(modelId: "kokoro-82m")
+let model = try await loader.load()
+let voices = model.voices()  // [XybridVoiceInfo]?
+```
+
+### Run Inference
+
+```swift
+let envelope = XybridEnvelope.text(text: "Hello!", voiceId: "af", speed: 1.0)
+let result = try await model.run(envelope: envelope, config: nil)
+
+if result.success, let audio = result.audioBytes {
+    // Play audio (wrap in WAV header for AVAudioPlayer)
 }
 ```
 
-### Load Model from Registry
+### Generation Config (LLM)
 
 ```swift
-// Load model asynchronously
-Task {
-    do {
-        let loader = XybridModelLoader.fromRegistry(modelId: "kokoro-82m")
-        let model = try await loader.load()
-        print("Loaded: \(model.modelId())")
-    } catch {
-        print("Load failed: \(error.localizedDescription)")
-    }
-}
-```
-
-### Run Inference (TTS)
-
-```swift
-// Create text envelope for TTS
-let envelope = XybridEnvelope.text(
-    text: "Hello, world!",
-    voiceId: "af",
-    speed: 1.0
+let config = XybridGenerationConfig(
+    maxTokens: 512,
+    temperature: 0.7,
+    topP: 0.9,
+    minP: nil, topK: nil,
+    repetitionPenalty: nil,
+    stopSequences: nil
 )
-
-// Run inference with timing
-let startTime = CFAbsoluteTimeGetCurrent()
-
-Task {
-    do {
-        let result = try await model.run(envelope: envelope)
-        let latencyMs = Int((CFAbsoluteTimeGetCurrent() - startTime) * 1000)
-
-        if result.success, let audio = result.audioBytes {
-            print("Generated audio in \(latencyMs)ms")
-            // Play or save audio
-        }
-    } catch {
-        print("Inference failed: \(error.localizedDescription)")
-    }
-}
-```
-
-### Run Inference (ASR)
-
-```swift
-// Create audio envelope for ASR
-let envelope = XybridEnvelope.audio(
-    bytes: audioData,
-    sampleRate: 16000,
-    channels: 1
-)
-
-Task {
-    do {
-        let result = try await model.run(envelope: envelope)
-
-        if let text = result.text {
-            print("Transcription: \(text)")
-        }
-    } catch {
-        print("Inference failed: \(error.localizedDescription)")
-    }
-}
+let result = try await model.run(envelope: envelope, config: config)
 ```
 
 ## Troubleshooting
 
 ### "Module 'Xybrid' not found"
 
-The XCFramework hasn't been built. Follow the "Building with XCFramework" section above.
+The XCFramework hasn't been built or the package dependency hasn't been added.
 
-### Linker errors (undefined symbols)
+1. Run `cargo xtask build-xcframework --release` from the xybrid repo root
+2. Add the local package dependency in Xcode (see Quick Start step 3)
 
-Same as above - the Rust library needs to be compiled and linked via XCFramework.
+### Linker errors
 
-### "Target 'aarch64-apple-ios' not installed"
-
-Install the required Rust target:
-
-```bash
-rustup target add aarch64-apple-ios
-```
-
-### Build fails on Intel Mac
-
-Ensure you have all simulator targets:
-
-```bash
-rustup target add x86_64-apple-ios
-```
+Ensure the XCFramework includes headers. Rebuild with `cargo xtask build-xcframework --release`.
 
 ### App crashes on launch
 
 Check that:
-1. XCFramework is built for the correct architecture
-2. Xybrid Swift Package is properly linked
-3. All required frameworks are embedded
-
-## Architecture
-
-This example uses:
-
-- **SwiftUI** for declarative UI
-- **Swift Concurrency** (async/await) for asynchronous operations
-- **Swift Package Manager** for Xybrid SDK dependency
-- **UniFFI** for Rust-Swift bridging (via XCFramework)
-
-The SDK is linked via a local Swift Package reference to `../../bindings/apple`.
-
-## API Reference
-
-- **[SDK API Reference](../../docs/sdk/API_REFERENCE.md)** - Complete API specification
-- **[Swift SDK](../../docs/sdk/swift.md)** - Swift-specific documentation (planned)
-- **[Online Documentation](https://docs.xybrid.dev/sdk/swift)** - Full guides and tutorials
+1. XCFramework is built for the correct architecture (arm64 for device)
+2. `initSdkCacheDir()` is called before any model operations
 
 ## Related
 
-- [Main Examples README](../README.md) - All platform examples
 - [Xybrid Swift SDK](../../bindings/apple/README.md)
-- [Building XCFramework](../../bindings/apple/README.md#building-the-xcframework)
+- [SDK API Reference](../../docs/sdk/API_REFERENCE.md)
+- [Main Examples README](../README.md)

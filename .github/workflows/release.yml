@@ -112,6 +112,16 @@ jobs:
           cd bindings/apple/XCFrameworks
           zip -r ../../../dist/XybridFFI-${VERSION}.xcframework.zip XybridFFI.xcframework
 
+      - name: Compute XCFramework checksum
+        id: checksum
+        shell: bash
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          CHECKSUM=$(shasum -a 256 dist/XybridFFI-${VERSION}.xcframework.zip | awk '{print $1}')
+          echo "checksum=$CHECKSUM" >> $GITHUB_OUTPUT
+          echo "version=${VERSION#v}" >> $GITHUB_OUTPUT
+          echo "XCFramework SHA256: $CHECKSUM"
+
       - name: Upload XCFramework artifact
         uses: actions/upload-artifact@v4
         with:
@@ -479,9 +489,6 @@ jobs:
           echo "" >> CHANGELOG_RELEASE.md
           echo "### Artifacts" >> CHANGELOG_RELEASE.md
           echo "" >> CHANGELOG_RELEASE.md
-          echo "**Apple (XCFramework)**" >> CHANGELOG_RELEASE.md
-          echo "- \`XybridFFI-${CURRENT_TAG}.xcframework.zip\` - iOS + macOS universal framework" >> CHANGELOG_RELEASE.md
-          echo "" >> CHANGELOG_RELEASE.md
           echo "**Android**" >> CHANGELOG_RELEASE.md
           echo "- \`xybrid-android-${CURRENT_TAG}.zip\` - Native .so files for all ABIs" >> CHANGELOG_RELEASE.md
           echo "" >> CHANGELOG_RELEASE.md
@@ -490,6 +497,10 @@ jobs:
           echo "" >> CHANGELOG_RELEASE.md
           echo "**Unity**" >> CHANGELOG_RELEASE.md
           echo "- \`xybrid-unity-sdk-${CURRENT_TAG}.tar.gz\` - Native plugins for all platforms (uploaded by Build Unity workflow)" >> CHANGELOG_RELEASE.md
+          echo "" >> CHANGELOG_RELEASE.md
+          echo "**Swift (iOS/macOS)**" >> CHANGELOG_RELEASE.md
+          echo "- SPM: \`.package(url: \"https://github.com/${{ github.repository }}\", branch: \"swift\")\`" >> CHANGELOG_RELEASE.md
+          echo "- \`XybridFFI-${CURRENT_TAG}.xcframework.zip\` - Pre-built XCFramework (iOS arm64 + macOS arm64)" >> CHANGELOG_RELEASE.md
           echo "" >> CHANGELOG_RELEASE.md
           echo "**CLI**" >> CHANGELOG_RELEASE.md
           echo "- Cross-platform binaries for macOS (arm64, x86_64), Linux (x86_64), and Windows (x86_64)" >> CHANGELOG_RELEASE.md
@@ -503,5 +514,110 @@ jobs:
           body_path: CHANGELOG_RELEASE.md
           draft: false
           prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  #
+  # Publish Swift SDK Package (updates `swift` branch with URL-based Package.swift)
+  # Users install via: .package(url: "https://github.com/xybrid-ai/xybrid", branch: "swift")
+  #
+  publish-swift:
+    name: Publish Swift Package
+    needs: [release]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download XCFramework artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: xcframework
+          path: dist
+
+      - name: Compute checksum and generate Package.swift
+        shell: bash
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          VERSION=${TAG#v}
+          ZIPFILE=$(ls dist/XybridFFI-*.xcframework.zip)
+          CHECKSUM=$(shasum -a 256 "$ZIPFILE" | awk '{print $1}')
+          URL="https://github.com/${{ github.repository }}/releases/download/${TAG}/XybridFFI-${TAG}.xcframework.zip"
+
+          echo "Version: $VERSION"
+          echo "URL: $URL"
+          echo "Checksum: $CHECKSUM"
+
+          # Generate the release Package.swift with URL-based binary target
+          cat > Package.swift << SWIFT_EOF
+          // swift-tools-version:5.7
+          import PackageDescription
+
+          let package = Package(
+              name: "Xybrid",
+              platforms: [
+                  .iOS(.v13),
+                  .macOS(.v10_15)
+              ],
+              products: [
+                  .library(
+                      name: "Xybrid",
+                      targets: ["Xybrid"]
+                  )
+              ],
+              targets: [
+                  .target(
+                      name: "Xybrid",
+                      dependencies: ["XybridFFI"],
+                      path: "Sources/Xybrid",
+                      linkerSettings: [
+                          .linkedLibrary("c++"),
+                          .linkedFramework("Metal"),
+                          .linkedFramework("CoreML"),
+                          .linkedFramework("Accelerate"),
+                          .linkedFramework("Security"),
+                      ]
+                  ),
+                  .binaryTarget(
+                      name: "XybridFFI",
+                      url: "$URL",
+                      checksum: "$CHECKSUM"
+                  )
+              ]
+          )
+          SWIFT_EOF
+
+      - name: Publish swift branch
+        shell: bash
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+
+          # Configure git
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Create or update the swift branch
+          git checkout --orphan swift-staging
+
+          # Copy only the files needed for the Swift package
+          mkdir -p staging/Sources/Xybrid
+          cp Package.swift staging/
+          cp bindings/apple/Sources/Xybrid/Xybrid.swift staging/Sources/Xybrid/
+          cp bindings/apple/Sources/Xybrid/xybrid_uniffi.swift staging/Sources/Xybrid/
+
+          # Switch to clean branch
+          git checkout --orphan swift || git checkout swift
+          git rm -rf . 2>/dev/null || true
+
+          # Move staged files to root
+          cp staging/Package.swift .
+          cp -r staging/Sources .
+          rm -rf staging
+
+          # Commit and push
+          git add Package.swift Sources/
+          git commit -m "swift: update to ${TAG}"
+          git push origin swift --force
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -3,14 +3,14 @@
 //  XybridExample
 //
 //  Demonstrates Xybrid SDK usage for iOS.
-//
-//  NOTE: The Xybrid import requires the XCFramework to be built first.
-//  Run `cargo xtask build-xcframework` from the xybrid repo root to build it.
-//  Then uncomment `import Xybrid` below to enable SDK functionality.
+//  Requires the XCFramework to be built first:
+//    cargo xtask build-xcframework
+//  Then add the Xybrid Swift Package dependency (../../bindings/apple) in Xcode.
 //
 
 import SwiftUI
-// import Xybrid  // Uncomment after building XCFramework
+import AVFoundation
+import Xybrid
 
 // MARK: - App State
 
@@ -25,14 +25,8 @@ enum InferenceState {
     case idle
     case loading
     case running
-    case completed(InferenceResult)
+    case completed(XybridResult)
     case error(String)
-}
-
-struct InferenceResult {
-    let text: String?
-    let latencyMs: Int
-    let success: Bool
 }
 
 // MARK: - Main Content View
@@ -61,25 +55,11 @@ struct ContentView: View {
 
     private func initializeSDK() {
         appState = .initializing
-
-        // NOTE: Replace with actual Xybrid SDK initialization after XCFramework is built
-        // Example with real SDK:
-        // Task {
-        //     do {
-        //         try await Xybrid.initialize()
-        //         await MainActor.run {
-        //             appState = .ready
-        //         }
-        //     } catch {
-        //         await MainActor.run {
-        //             appState = .error(error.localizedDescription)
-        //         }
-        //     }
-        // }
-
-        // Simulated initialization for demo purposes
         Task {
-            try? await Task.sleep(nanoseconds: 800_000_000) // 0.8 seconds
+            // Initialize the SDK cache directory
+            let cacheDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)
+                .first!.appendingPathComponent("xybrid").path
+            initSdkCacheDir(cacheDir: cacheDir)
             await MainActor.run {
                 appState = .ready
             }
@@ -174,8 +154,11 @@ struct ErrorView: View {
 struct InferenceView: View {
     @State private var inputText: String = "Hello, welcome to Xybrid!"
     @State private var modelId: String = "kokoro-82m"
+    @State private var voiceId: String = "af"
     @State private var inferenceState: InferenceState = .idle
-    @State private var modelLoaded: Bool = false
+    @State private var model: XybridModel? = nil
+    @State private var voices: [XybridVoiceInfo]? = nil
+    @State private var audioPlayer: AVAudioPlayer? = nil
 
     var body: some View {
         ScrollView {
@@ -203,7 +186,7 @@ struct InferenceView: View {
                             .autocapitalization(.none)
                             .disableAutocorrection(true)
 
-                        if modelLoaded {
+                        if model != nil {
                             Image(systemName: "checkmark.circle.fill")
                                 .foregroundColor(.green)
                         }
@@ -216,15 +199,33 @@ struct InferenceView: View {
                                     .progressViewStyle(CircularProgressViewStyle(tint: .white))
                                     .scaleEffect(0.8)
                             }
-                            Text(modelLoaded ? "Model Loaded" : "Load Model")
+                            Text(model != nil ? "Model Loaded" : "Load Model")
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 8)
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(isLoadingOrRunning || modelLoaded)
+                    .disabled(isLoadingOrRunning || model != nil)
                 }
                 .padding(.horizontal)
+
+                // Voice Picker (shown after model loads with voice support)
+                if let voices = voices, !voices.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Voice")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+
+                        Picker("Voice", selection: $voiceId) {
+                            ForEach(voices, id: \.id) { voice in
+                                Text("\(voice.name) (\(voice.id))")
+                                    .tag(voice.id)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                    }
+                    .padding(.horizontal)
+                }
 
                 Divider()
                     .padding(.horizontal)
@@ -259,16 +260,16 @@ struct InferenceView: View {
                         .padding(.vertical, 8)
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(!modelLoaded || isLoadingOrRunning || inputText.isEmpty)
+                    .disabled(model == nil || isLoadingOrRunning || inputText.isEmpty)
                 }
                 .padding(.horizontal)
 
                 // Results Section
-                if let result = inferenceResult {
+                if case .completed(let result) = inferenceState {
                     Divider()
                         .padding(.horizontal)
 
-                    ResultView(result: result)
+                    ResultView(result: result, onPlay: playAudio)
                         .padding(.horizontal)
                 }
 
@@ -317,101 +318,117 @@ struct InferenceView: View {
         return false
     }
 
-    private var inferenceResult: InferenceResult? {
-        if case .completed(let result) = inferenceState {
-            return result
-        }
-        return nil
-    }
-
     // MARK: - Actions
 
     private func loadModel() {
         inferenceState = .loading
 
-        // NOTE: Replace with actual model loading after XCFramework is built
-        // Example with real SDK:
-        // Task {
-        //     do {
-        //         let loader = XybridModelLoader.fromRegistry(modelId: modelId)
-        //         let model = try await loader.load()
-        //         await MainActor.run {
-        //             self.model = model
-        //             modelLoaded = true
-        //             inferenceState = .idle
-        //         }
-        //     } catch {
-        //         await MainActor.run {
-        //             inferenceState = .error("Failed to load model: \(error.localizedDescription)")
-        //         }
-        //     }
-        // }
-
-        // Simulated model loading for demo purposes
         Task {
-            try? await Task.sleep(nanoseconds: 1_200_000_000) // 1.2 seconds
-            await MainActor.run {
-                modelLoaded = true
-                inferenceState = .idle
+            do {
+                let loader = XybridModelLoader.fromRegistry(modelId: modelId)
+                let loadedModel = try await loader.load()
+
+                // Get voices if available
+                let modelVoices = loadedModel.voices()
+
+                await MainActor.run {
+                    self.model = loadedModel
+                    self.voices = modelVoices
+                    if let defaultVoice = loadedModel.defaultVoiceId() {
+                        self.voiceId = defaultVoice
+                    }
+                    inferenceState = .idle
+                }
+            } catch {
+                await MainActor.run {
+                    inferenceState = .error("Failed to load model: \(error.localizedDescription)")
+                }
             }
         }
     }
 
     private func runInference() {
-        guard modelLoaded else { return }
+        guard model != nil else { return }
 
         inferenceState = .running
-        let startTime = CFAbsoluteTimeGetCurrent()
 
-        // NOTE: Replace with actual inference after XCFramework is built
-        // Example with real SDK:
-        // Task {
-        //     do {
-        //         let envelope = XybridEnvelope.text(
-        //             text: inputText,
-        //             voiceId: "af",
-        //             speed: 1.0
-        //         )
-        //         let result = try await model.run(envelope: envelope)
-        //         let latencyMs = Int((CFAbsoluteTimeGetCurrent() - startTime) * 1000)
-        //
-        //         await MainActor.run {
-        //             inferenceState = .completed(InferenceResult(
-        //                 text: result.text,
-        //                 latencyMs: latencyMs,
-        //                 success: result.success
-        //             ))
-        //         }
-        //     } catch {
-        //         await MainActor.run {
-        //             inferenceState = .error("Inference failed: \(error.localizedDescription)")
-        //         }
-        //     }
-        // }
-
-        // Simulated inference for demo purposes
         Task {
-            // Simulate processing time
-            let processingTime = UInt64.random(in: 300_000_000...800_000_000)
-            try? await Task.sleep(nanoseconds: processingTime)
+            do {
+                let envelope = XybridEnvelope.text(
+                    text: inputText,
+                    voiceId: voiceId,
+                    speed: 1.0
+                )
+                let result = try await model!.run(envelope: envelope, config: nil)
 
-            let latencyMs = Int((CFAbsoluteTimeGetCurrent() - startTime) * 1000)
-
-            await MainActor.run {
-                inferenceState = .completed(InferenceResult(
-                    text: "Audio generated (\(inputText.count) characters)",
-                    latencyMs: latencyMs,
-                    success: true
-                ))
+                await MainActor.run {
+                    inferenceState = .completed(result)
+                }
+            } catch {
+                await MainActor.run {
+                    inferenceState = .error("Inference failed: \(error.localizedDescription)")
+                }
             }
         }
+    }
+
+    private func playAudio() {
+        guard case .completed(let result) = inferenceState,
+              let audioBytes = result.audioBytes else { return }
+
+        // Build a WAV header for raw PCM data (24000 Hz, 16-bit mono)
+        let wavData = buildWavData(
+            pcm: Data(audioBytes),
+            sampleRate: 24000,
+            channels: 1,
+            bitsPerSample: 16
+        )
+
+        do {
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
+            try AVAudioSession.sharedInstance().setActive(true)
+            audioPlayer = try AVAudioPlayer(data: wavData)
+            audioPlayer?.play()
+        } catch {
+            print("Audio playback error: \(error)")
+        }
+    }
+
+    private func buildWavData(pcm: Data, sampleRate: UInt32, channels: UInt16, bitsPerSample: UInt16) -> Data {
+        var data = Data()
+        let dataSize = UInt32(pcm.count)
+        let byteRate = sampleRate * UInt32(channels) * UInt32(bitsPerSample / 8)
+        let blockAlign = channels * (bitsPerSample / 8)
+
+        // RIFF header
+        data.append(contentsOf: "RIFF".utf8)
+        data.append(withUnsafeBytes(of: (36 + dataSize).littleEndian) { Data($0) })
+        data.append(contentsOf: "WAVE".utf8)
+
+        // fmt chunk
+        data.append(contentsOf: "fmt ".utf8)
+        data.append(withUnsafeBytes(of: UInt32(16).littleEndian) { Data($0) })
+        data.append(withUnsafeBytes(of: UInt16(1).littleEndian) { Data($0) }) // PCM
+        data.append(withUnsafeBytes(of: channels.littleEndian) { Data($0) })
+        data.append(withUnsafeBytes(of: sampleRate.littleEndian) { Data($0) })
+        data.append(withUnsafeBytes(of: byteRate.littleEndian) { Data($0) })
+        data.append(withUnsafeBytes(of: blockAlign.littleEndian) { Data($0) })
+        data.append(withUnsafeBytes(of: bitsPerSample.littleEndian) { Data($0) })
+
+        // data chunk
+        data.append(contentsOf: "data".utf8)
+        data.append(withUnsafeBytes(of: dataSize.littleEndian) { Data($0) })
+        data.append(pcm)
+
+        return data
     }
 }
 
 // MARK: - Result View
 
 struct ResultView: View {
-    let result: InferenceResult
+    let result: XybridResult
+    let onPlay: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -436,7 +453,7 @@ struct ResultView: View {
                         .foregroundColor(.blue)
                 }
 
-                // Output
+                // Output text
                 if let text = result.text {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Output:")
@@ -450,9 +467,19 @@ struct ResultView: View {
                     }
                 }
 
-                // Play Button (placeholder for audio playback)
-                if result.success {
-                    Button(action: playAudio) {
+                // Audio size
+                if let audioBytes = result.audioBytes {
+                    HStack {
+                        Text("Audio:")
+                            .fontWeight(.medium)
+                        Text("\(audioBytes.count / 1024) KB")
+                            .foregroundColor(.secondary)
+                    }
+                }
+
+                // Play Button
+                if result.success && result.audioBytes != nil {
+                    Button(action: onPlay) {
                         Label("Play Audio", systemImage: "play.fill")
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 8)
@@ -466,16 +493,6 @@ struct ResultView: View {
             .background(Color.green.opacity(0.1))
             .cornerRadius(8)
         }
-    }
-
-    private func playAudio() {
-        // NOTE: Implement audio playback after XCFramework is built
-        // Example:
-        // if let audioData = result.audioBytes {
-        //     let player = try? AVAudioPlayer(data: audioData)
-        //     player?.play()
-        // }
-        print("Play audio tapped - requires XCFramework for actual playback")
     }
 }
 
