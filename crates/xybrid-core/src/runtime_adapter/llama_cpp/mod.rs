@@ -26,6 +26,27 @@ mod sys;
 // Re-export log control functions for external use
 pub use sys::{llama_log_get_verbosity, llama_log_set_verbosity};
 
+/// Strip thinking/reasoning tags from model output.
+///
+/// Models like Qwen 3.5 emit `<think>...</think>` blocks before the actual
+/// response. This function removes those blocks so only the user-facing
+/// content remains.
+fn strip_thinking_tags(text: &str) -> String {
+    let mut result = text.to_string();
+    // Remove all <think>...</think> blocks (greedy within each block)
+    while let Some(start) = result.find("<think>") {
+        if let Some(end) = result[start..].find("</think>") {
+            let end_absolute = start + end + "</think>".len();
+            result.replace_range(start..end_absolute, "");
+        } else {
+            // Opening tag without closing — strip from <think> to end
+            result.truncate(start);
+            break;
+        }
+    }
+    result
+}
+
 use crate::runtime_adapter::llm::{
     ChatMessage, GenerationConfig, GenerationOutput, LlmBackend, LlmConfig, LlmResult,
 };
@@ -88,6 +109,13 @@ impl LlamaCppBackend {
         // Initialize llama.cpp backend exactly once (idempotent via Once).
         BACKEND_INIT.call_once(|| {
             sys::llama_backend_init();
+
+            // Check for verbosity env var to surface C++ logs during debugging
+            if let Ok(level) = std::env::var("XYBRID_LLAMACPP_VERBOSITY") {
+                if let Ok(v) = level.parse::<i32>() {
+                    sys::llama_log_set_verbosity(v);
+                }
+            }
         });
 
         Ok(Self {
@@ -164,8 +192,16 @@ impl LlmBackend for LlamaCppBackend {
         };
 
         // Load model
-        let model = sys::llama_load_model_from_file(&gguf_path, config.gpu_layers)
-            .map_err(|e| AdapterError::RuntimeError(format!("Failed to load model: {}", e)))?;
+        let model =
+            sys::llama_load_model_from_file(&gguf_path, config.gpu_layers).map_err(|e| {
+                AdapterError::RuntimeError(format!(
+                    "Failed to load model from {}: {}. \
+                 This may indicate an unsupported GGUF architecture — \
+                 check that the vendored llama.cpp version supports this model's architecture. \
+                 Enable verbose logging with XYBRID_LLAMACPP_VERBOSITY=4 for C++ error details.",
+                    gguf_path, e
+                ))
+            })?;
 
         // Create context with thread and batch configuration
         // n_threads=0 means auto-detect in the C++ layer
@@ -319,6 +355,9 @@ impl LlmBackend for LlamaCppBackend {
             log::debug!(target: "xybrid_core", "No stop pattern found in text");
         }
 
+        // Strip thinking tags (e.g., Qwen 3.5 <think>...</think> blocks)
+        let text = strip_thinking_tags(&text);
+
         // Trim any trailing whitespace from the response
         let text = text.trim().to_string();
 
@@ -446,6 +485,7 @@ impl LlmBackend for LlamaCppBackend {
         let mut last_emitted_len = 0usize;
         let mut token_index = 0usize;
         let mut hit_stop_pattern = false;
+        let mut inside_think_block = false;
 
         // Build stop patterns list for early detection during streaming
         // Note: <end_of_turn> is Gemma's stop token, <|im_end|> is ChatML (Qwen, Phi)
@@ -500,6 +540,27 @@ impl LlmBackend for LlamaCppBackend {
                 }
 
                 cumulative_text.push_str(token_text);
+
+                // Handle <think>...</think> blocks: suppress streaming output
+                // while inside a thinking block (Qwen 3.5, etc.)
+                if !inside_think_block && cumulative_text[last_emitted_len..].contains("<think>") {
+                    inside_think_block = true;
+                    // Move emitted pointer past any content before <think>
+                    if let Some(pos) = cumulative_text.find("<think>") {
+                        last_emitted_len = pos;
+                    }
+                }
+                if inside_think_block {
+                    if cumulative_text.contains("</think>") {
+                        inside_think_block = false;
+                        // Strip the think block from cumulative text
+                        cumulative_text = strip_thinking_tags(&cumulative_text);
+                        // Reset emitted length to current cleaned text length
+                        // (nothing new to emit yet, next token will trigger emission)
+                        last_emitted_len = last_emitted_len.min(cumulative_text.len());
+                    }
+                    return Ok(());
+                }
 
                 // Check if any COMPLETE stop pattern is now in the cumulative text
                 for pattern in &streaming_stop_patterns {
@@ -584,6 +645,9 @@ impl LlmBackend for LlamaCppBackend {
                 break;
             }
         }
+
+        // Strip thinking tags (e.g., Qwen 3.5 <think>...</think> blocks)
+        let text = strip_thinking_tags(&text);
 
         let text = text.trim().to_string();
 
