@@ -5,8 +5,12 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import ai.xybrid.XybridModel
+import ai.xybrid.XybridVoiceInfo
 import ai.xybrid.example.data.CatalogModel
+import ai.xybrid.example.data.ModelTask
 import ai.xybrid.example.data.MODEL_CATALOG
 import ai.xybrid.example.state.ModelState
 
@@ -57,13 +61,21 @@ fun ModelLoadingCard(
                     MODEL_CATALOG.forEach { model ->
                         DropdownMenuItem(
                             text = {
-                                Column {
-                                    Text(model.displayName)
-                                    Text(
-                                        text = model.task,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(model.displayName)
+                                        Text(
+                                            text = model.description,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    TaskBadge(model.task)
                                 }
                             },
                             onClick = {
@@ -75,25 +87,9 @@ fun ModelLoadingCard(
                 }
             }
 
+            // Model info surface (before loading)
             if (selectedModel != null && modelState !is ModelState.Loaded) {
-                Surface(
-                    color = MaterialTheme.colorScheme.secondaryContainer,
-                    shape = MaterialTheme.shapes.small,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        Text(
-                            text = selectedModel.task,
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer
-                        )
-                        Text(
-                            text = selectedModel.description,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer
-                        )
-                    }
-                }
+                ModelInfoSurface(selectedModel)
             }
 
             when (modelState) {
@@ -107,21 +103,28 @@ fun ModelLoadingCard(
                     }
                 }
                 is ModelState.Loading -> {
-                    Row(
+                    Column(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        CircularProgressIndicator(modifier = Modifier.size(24.dp))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Downloading & loading model...")
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        Text(
+                            text = "Downloading & loading ${selectedModel?.displayName ?: "model"}...",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "This may take a moment on first run",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
                 is ModelState.Loaded -> {
-                    Text(
-                       // TODO text = "Model loaded: ${modelState.model.id}",
-                        text = "Model loaded",
-                        color = MaterialTheme.colorScheme.primary
+                    LoadedModelInfo(
+                        model = modelState.model,
+                        catalogModel = selectedModel
                     )
                     OutlinedButton(
                         onClick = onUnloadModel,
@@ -144,5 +147,111 @@ fun ModelLoadingCard(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun ModelInfoSurface(model: CatalogModel) {
+    Surface(
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        shape = MaterialTheme.shapes.small,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                TaskBadge(model.task)
+                model.parameterCount?.let {
+                    Text(
+                        text = it,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = model.description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSecondaryContainer
+            )
+        }
+    }
+}
+
+@Composable
+private fun LoadedModelInfo(model: XybridModel, catalogModel: CatalogModel?) {
+    Surface(
+        color = MaterialTheme.colorScheme.primaryContainer,
+        shape = MaterialTheme.shapes.small,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = catalogModel?.displayName ?: "Model",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+                catalogModel?.let { TaskBadge(it.task) }
+            }
+
+            catalogModel?.parameterCount?.let {
+                Text(
+                    text = "Parameters: $it",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+            }
+
+            // Show voice info for TTS models
+            if (model.hasVoices()) {
+                val voices: List<XybridVoiceInfo>? = model.voices()
+                val defaultVoice = model.defaultVoiceId()
+                if (voices != null && voices.isNotEmpty()) {
+                    Text(
+                        text = "${voices.size} voice${if (voices.size > 1) "s" else ""} available" +
+                                (defaultVoice?.let { " (default: $it)" } ?: ""),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                }
+            }
+
+            Text(
+                text = "Ready for inference",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary
+            )
+        }
+    }
+}
+
+@Composable
+fun TaskBadge(task: ModelTask) {
+    val color = when (task) {
+        ModelTask.TTS -> MaterialTheme.colorScheme.tertiary
+        ModelTask.ASR -> MaterialTheme.colorScheme.secondary
+        ModelTask.LLM -> MaterialTheme.colorScheme.primary
+    }
+    Surface(
+        color = color.copy(alpha = 0.15f),
+        shape = MaterialTheme.shapes.extraSmall
+    ) {
+        Text(
+            text = task.label,
+            style = MaterialTheme.typography.labelSmall,
+            color = color,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+        )
     }
 }

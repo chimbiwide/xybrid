@@ -1,47 +1,71 @@
 package ai.xybrid.example.data
 
+enum class ModelTask(val label: String) {
+    TTS("Text-to-Speech"),
+    ASR("Speech Recognition"),
+    LLM("Text Generation");
+}
+
 data class CatalogModel(
     val id: String,
     val displayName: String,
-    val task: String,
+    val task: ModelTask,
     val description: String,
-    val defaultInput: String
+    val defaultInput: String,
+    val parameterCount: String? = null
 )
+
+/** Input field label for a given task. */
+fun ModelTask.inputLabel(): String = when (this) {
+    ModelTask.TTS -> "Text to synthesize"
+    ModelTask.ASR -> "Audio input required"
+    ModelTask.LLM -> "Prompt"
+}
+
+/** Whether the task accepts text input from the user. */
+fun ModelTask.acceptsTextInput(): Boolean = when (this) {
+    ModelTask.TTS, ModelTask.LLM -> true
+    ModelTask.ASR -> false
+}
 
 val MODEL_CATALOG = listOf(
     CatalogModel(
         id = "gemma-3-1b",
         displayName = "Gemma 3 1B",
-        task = "LLM",
-        description = "High-quality English TTS model (82M parameters)",
-        defaultInput = "Hello, welcome to Xybrid!"
+        task = ModelTask.LLM,
+        description = "Google's compact language model for text generation",
+        defaultInput = "Hello, welcome to Xybrid!",
+        parameterCount = "1B"
     ),
     CatalogModel(
         id = "kokoro-82m",
         displayName = "Kokoro 82M",
-        task = "Text-to-Speech",
-        description = "High-quality English TTS model (82M parameters)",
-        defaultInput = "Hello, welcome to Xybrid!"
+        task = ModelTask.TTS,
+        description = "High-quality English TTS with multiple voices",
+        defaultInput = "Hello, welcome to Xybrid!",
+        parameterCount = "82M"
     ),
     CatalogModel(
         id = "kitten-tts-nano-0.8",
-        displayName = "Kitten TTs Nano 0.8",
-        task = "Text-to-Speech",
-        description = "High-quality English TTS model",
-        defaultInput = "Hello, welcome to Xybrid!"
+        displayName = "KittenTTS Nano 0.8",
+        task = ModelTask.TTS,
+        description = "Lightweight English TTS model",
+        defaultInput = "Hello, welcome to Xybrid!",
+        parameterCount = "Nano"
     ),
     CatalogModel(
         id = "whisper-tiny",
         displayName = "Whisper Tiny",
-        task = "Speech Recognition",
+        task = ModelTask.ASR,
         description = "OpenAI Whisper tiny model for speech-to-text",
-        defaultInput = "Provide audio input for transcription"
+        defaultInput = ""
     ),
     CatalogModel(
         id = "wav2vec2-base-960h",
         displayName = "Wav2Vec2 Base",
-        task = "Speech Recognition",
-        description = "Facebook Wav2Vec2 base model trained on 960h LibriSpeech",
-        defaultInput = "Provide audio input for transcription"
+        task = ModelTask.ASR,
+        description = "Facebook Wav2Vec2 trained on 960h LibriSpeech",
+        defaultInput = "",
+        parameterCount = "95M"
     )
 )

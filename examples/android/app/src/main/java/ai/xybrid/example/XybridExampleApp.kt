@@ -19,7 +19,9 @@ import ai.xybrid.Envelope
 import ai.xybrid.displayMessage
 
 // State and component imports
+import ai.xybrid.example.audio.PcmPlayer
 import ai.xybrid.example.data.CatalogModel
+import ai.xybrid.example.data.ModelTask
 import ai.xybrid.example.state.ModelState
 import ai.xybrid.example.state.InferenceState
 import ai.xybrid.example.components.ModelLoadingCard
@@ -36,6 +38,12 @@ fun XybridExampleApp() {
     var inferenceState by remember { mutableStateOf<InferenceState>(InferenceState.Idle) }
     var selectedModel by remember { mutableStateOf<CatalogModel?>(null) }
     var inputText by remember { mutableStateOf("") }
+    var selectedVoiceId by remember { mutableStateOf<String?>(null) }
+
+    val pcmPlayer = remember { PcmPlayer() }
+    DisposableEffect(Unit) {
+        onDispose { pcmPlayer.release() }
+    }
 
     val coroutineScope = rememberCoroutineScope()
     val scrollState = rememberScrollState()
@@ -61,6 +69,7 @@ fun XybridExampleApp() {
             onModelSelected = { model ->
                 selectedModel = model
                 inputText = model.defaultInput
+                selectedVoiceId = null
             },
             onLoadModel = {
                 val model = selectedModel ?: return@ModelLoadingCard
@@ -72,6 +81,11 @@ fun XybridExampleApp() {
                             loader.load()
                         }
                         modelState = ModelState.Loaded(loaded)
+
+                        // Pick default voice for TTS models
+                        if (model.task == ModelTask.TTS) {
+                            selectedVoiceId = loaded.defaultVoiceId()
+                        }
                     } catch (e: XybridException) {
                         modelState = ModelState.Error(e.displayMessage)
                     } catch (e: Exception) {
@@ -82,8 +96,10 @@ fun XybridExampleApp() {
                 }
             },
             onUnloadModel = {
+                pcmPlayer.stop()
                 modelState = ModelState.NotLoaded
                 inferenceState = InferenceState.Idle
+                selectedVoiceId = null
             },
             onRetry = { modelState = ModelState.NotLoaded }
         )
@@ -92,27 +108,43 @@ fun XybridExampleApp() {
         InferenceCard(
             inferenceState = inferenceState,
             modelState = modelState,
+            selectedModel = selectedModel,
             inputText = inputText,
+            selectedVoiceId = selectedVoiceId,
+            pcmPlayer = pcmPlayer,
             onInputTextChange = { inputText = it },
             onRunInference = {
                 val model = (modelState as? ModelState.Loaded)?.model ?: return@InferenceCard
+                val task = selectedModel?.task ?: return@InferenceCard
                 inferenceState = InferenceState.Running
                 coroutineScope.launch {
                     try {
                         val result = withContext(Dispatchers.IO) {
-                            val envelope = Envelope.text(inputText)
+                            val envelope = when (task) {
+                                ModelTask.TTS -> {
+                                    val voiceId = selectedVoiceId
+                                    if (voiceId != null) {
+                                        Envelope.text(inputText, voiceId)
+                                    } else {
+                                        Envelope.text(inputText)
+                                    }
+                                }
+                                ModelTask.LLM -> Envelope.text(inputText)
+                                ModelTask.ASR -> Envelope.text(inputText) // placeholder
+                            }
                             model.run(envelope, null)
                         }
 
                         if (result.success) {
                             inferenceState = InferenceState.Completed(
+                                task = task,
                                 text = result.text,
-                                audioSize = result.audioBytes?.size,
+                                audioBytes = result.audioBytes,
                                 latencyMs = result.latencyMs.toLong()
                             )
                         } else {
                             inferenceState = InferenceState.Error(
-                                result.toString()
+                                result.text ?: "Inference returned unsuccessful result"
                             )
                         }
                     } catch (e: XybridException) {

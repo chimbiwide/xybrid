@@ -2,22 +2,36 @@ package ai.xybrid.example.components
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import ai.xybrid.example.audio.PcmPlayer
+import ai.xybrid.example.data.CatalogModel
+import ai.xybrid.example.data.ModelTask
+import ai.xybrid.example.data.acceptsTextInput
+import ai.xybrid.example.data.inputLabel
 import ai.xybrid.example.state.InferenceState
 import ai.xybrid.example.state.ModelState
+import androidx.compose.foundation.text.selection.SelectionContainer
 
 @Composable
 fun InferenceCard(
     inferenceState: InferenceState,
     modelState: ModelState,
+    selectedModel: CatalogModel?,
     inputText: String,
+    selectedVoiceId: String?,
+    pcmPlayer: PcmPlayer,
     onInputTextChange: (String) -> Unit,
     onRunInference: () -> Unit,
     onRetry: () -> Unit
 ) {
+    val task = selectedModel?.task
+
     Card(
         modifier = Modifier.fillMaxWidth()
     ) {
@@ -30,24 +44,64 @@ fun InferenceCard(
                 style = MaterialTheme.typography.titleMedium
             )
 
-            OutlinedTextField(
-                value = inputText,
-                onValueChange = onInputTextChange,
-                label = { Text("Text to synthesize") },
-                modifier = Modifier.fillMaxWidth(),
-                enabled = modelState is ModelState.Loaded && inferenceState !is InferenceState.Running,
-                minLines = 2,
-                maxLines = 4
-            )
+            // Task-specific input area
+            if (task != null && task.acceptsTextInput()) {
+                OutlinedTextField(
+                    value = inputText,
+                    onValueChange = onInputTextChange,
+                    label = { Text(task.inputLabel()) },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = modelState is ModelState.Loaded && inferenceState !is InferenceState.Running,
+                    minLines = if (task == ModelTask.LLM) 3 else 2,
+                    maxLines = if (task == ModelTask.LLM) 6 else 4
+                )
+
+                // Show voice hint for TTS
+                if (task == ModelTask.TTS && selectedVoiceId != null) {
+                    Text(
+                        text = "Voice: $selectedVoiceId",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            } else if (task == ModelTask.ASR) {
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    shape = MaterialTheme.shapes.small,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text(
+                            text = "Audio Input Required",
+                            style = MaterialTheme.typography.labelMedium
+                        )
+                        Text(
+                            text = "Speech recognition models require audio input. " +
+                                    "Audio recording is not yet supported in this example.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
 
             when (val state = inferenceState) {
                 is InferenceState.Idle -> {
                     Button(
                         onClick = onRunInference,
-                        enabled = modelState is ModelState.Loaded && inputText.isNotBlank(),
+                        enabled = modelState is ModelState.Loaded
+                                && task != null
+                                && (task.acceptsTextInput() && inputText.isNotBlank()),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text("Run Inference")
+                        Text(
+                            when (task) {
+                                ModelTask.TTS -> "Synthesize Speech"
+                                ModelTask.LLM -> "Generate"
+                                ModelTask.ASR -> "Transcribe"
+                                null -> "Run Inference"
+                            }
+                        )
                     }
                 }
                 is InferenceState.Running -> {
@@ -58,41 +112,24 @@ fun InferenceCard(
                     ) {
                         CircularProgressIndicator(modifier = Modifier.size(24.dp))
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Running inference...")
+                        Text(
+                            when (task) {
+                                ModelTask.TTS -> "Synthesizing..."
+                                ModelTask.LLM -> "Generating..."
+                                ModelTask.ASR -> "Transcribing..."
+                                null -> "Running..."
+                            }
+                        )
                     }
                 }
                 is InferenceState.Completed -> {
-                    Card(
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.primaryContainer
-                        )
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Text(
-                                text = "Result",
-                                style = MaterialTheme.typography.labelMedium
-                            )
-                            state.text?.let {
-                                Text(text = it)
-                            }
-                            state.audioSize?.let { size ->
-                                Text(
-                                    text = "Audio output: ${size / 1024} KB",
-                                    style = MaterialTheme.typography.bodySmall
-                                )
-                            }
-                            Text(
-                                text = "Latency: ${state.latencyMs} ms",
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                        }
-                    }
+                    CompletedResult(state, pcmPlayer)
 
                     Button(
-                        onClick = onRetry,
+                        onClick = {
+                            pcmPlayer.stop()
+                            onRetry()
+                        },
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text("Run Again")
@@ -113,4 +150,191 @@ fun InferenceCard(
             }
         }
     }
+}
+
+@Composable
+private fun CompletedResult(state: InferenceState.Completed, pcmPlayer: PcmPlayer) {
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = "Result",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                TaskBadge(state.task)
+            }
+
+            when (state.task) {
+                ModelTask.TTS -> TtsResult(state, pcmPlayer)
+                ModelTask.LLM -> LlmResult(state)
+                ModelTask.ASR -> AsrResult(state)
+            }
+
+            // Latency always shown
+            Text(
+                text = "Latency: ${state.latencyMs} ms",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+            )
+        }
+    }
+}
+
+@Composable
+private fun TtsResult(state: InferenceState.Completed, pcmPlayer: PcmPlayer) {
+    val audioBytes = state.audioBytes
+    if (audioBytes != null && audioBytes.isNotEmpty()) {
+        var isPlaying by remember { mutableStateOf(false) }
+        val durationSec = pcmPlayer.estimateDurationSec(audioBytes)
+        val sizeKb = audioBytes.size / 1024
+
+        Surface(
+            color = MaterialTheme.colorScheme.tertiaryContainer,
+            shape = MaterialTheme.shapes.small,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(
+                            text = "Audio generated",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer
+                        )
+                        Text(
+                            text = "${sizeKb} KB  |  ${"%.1f".format(durationSec)}s  |  24kHz mono",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer
+                        )
+                    }
+                }
+
+                // Play / Stop button
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (isPlaying) {
+                        OutlinedButton(
+                            onClick = {
+                                pcmPlayer.stop()
+                                isPlaying = false
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("Stop")
+                        }
+                    } else {
+                        Button(
+                            onClick = {
+                                isPlaying = true
+                                pcmPlayer.play(audioBytes) {
+                                    isPlaying = false
+                                }
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("Play Audio")
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        Text(
+            text = "No audio output received",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.5f)
+        )
+    }
+
+    // TTS can also return text (e.g., phonemes) as debug info
+    state.text?.let {
+        if (it.isNotBlank()) {
+            Text(
+                text = it,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onPrimaryContainer
+            )
+        }
+    }
+}
+
+@Composable
+private fun LlmResult(state: InferenceState.Completed) {
+    val clipboardManager = LocalClipboardManager.current
+
+    state.text?.let { text ->
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            SelectionContainer {
+                Text(
+                    text = text,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+            }
+            TextButton(
+                onClick = { clipboardManager.setText(AnnotatedString(text)) },
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+            ) {
+                Text(
+                    text = "Copy to clipboard",
+                    style = MaterialTheme.typography.labelSmall
+                )
+            }
+        }
+    } ?: Text(
+        text = "No text output",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.5f)
+    )
+}
+
+@Composable
+private fun AsrResult(state: InferenceState.Completed) {
+    val clipboardManager = LocalClipboardManager.current
+
+    state.text?.let { text ->
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            SelectionContainer {
+                Text(
+                    text = "\"$text\"",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+            }
+            TextButton(
+                onClick = { clipboardManager.setText(AnnotatedString(text)) },
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+            ) {
+                Text(
+                    text = "Copy to clipboard",
+                    style = MaterialTheme.typography.labelSmall
+                )
+            }
+        }
+    } ?: Text(
+        text = "No transcription output",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.5f)
+    )
 }
