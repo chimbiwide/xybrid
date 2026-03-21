@@ -975,10 +975,11 @@ packages:
   xybrid_flutter:
     dependency: "direct main"
     description:
-      path: "../../bindings/flutter"
-      relative: true
-    source: path
-    version: "0.1.0-beta6"
+      name: xybrid_flutter
+      sha256: "8e0042408ca4247eb5906cac3f4d966021cd836c7cd8a3793d9c34ecb67b84f1"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.1.0-beta7"
   yaml:
     dependency: transitive
     description:
