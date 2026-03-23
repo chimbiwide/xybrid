@@ -403,11 +403,11 @@ impl ModelLoader {
         // Create registry client (uses default API or environment variable)
         let client = RegistryClient::from_env()?;
 
-        // Fetch bundle (downloads if not cached, verifies SHA256)
-        let bundle_path = client.fetch(id, platform, progress_callback)?;
+        // Fetch and extract model (handles both .xyb bundles and passthrough GGUF files)
+        let model_dir = client.fetch_extracted(id, platform, progress_callback)?;
 
-        // Load from the cached bundle path
-        self.load_from_bundle(&bundle_path)
+        // Load from extracted directory
+        self.load_from_directory(&model_dir)
     }
 
     /// Load from legacy registry (deprecated - use load_from_registry_api instead).
