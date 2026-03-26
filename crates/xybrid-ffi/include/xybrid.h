@@ -334,6 +334,37 @@ struct XybridModelLoaderHandle *xybrid_model_loader_from_bundle(const char *path
 struct XybridModelLoaderHandle *xybrid_model_loader_from_directory(const char *path);
 
 /*
+ Create a model loader from a raw GGUF model file.
+
+ Auto-generates `model_metadata.json` by reading the GGUF binary header
+ (architecture, context length), writes it to the file's parent directory
+ if not already present, then loads from that directory.
+
+ # Parameters
+
+ - `path`: A null-terminated string containing the path to the GGUF file.
+
+ # Returns
+
+ A handle to the model loader, or null on failure.
+ On failure, call `xybrid_last_error()` to get the error message.
+
+ # Example (C)
+
+ ```c
+ XybridModelLoaderHandle* loader = xybrid_model_loader_from_model_file("/path/to/model.gguf");
+ if (loader == NULL) {
+     fprintf(stderr, "Failed: %s\n", xybrid_last_error());
+     return 1;
+ }
+ XybridModelHandle* model = xybrid_model_loader_load(loader);
+ // Use model...
+ xybrid_model_loader_free(loader);
+ ```
+ */
+struct XybridModelLoaderHandle *xybrid_model_loader_from_model_file(const char *path);
+
+/*
  Create a model loader from a HuggingFace Hub repository.
 
  Downloads model files from HuggingFace and caches them locally.

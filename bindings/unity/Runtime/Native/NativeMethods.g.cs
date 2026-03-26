@@ -191,15 +191,83 @@ namespace Xybrid.Native
         ///
         ///  A handle to the model loader, or null on failure.
         ///  On failure, call `xybrid_last_error()` to get the error message.
+        ///
+        ///  # Example (C)
+        ///
+        ///  ```c
+        ///  XybridModelLoaderHandle* loader = xybrid_model_loader_from_directory("/path/to/model/dir");
+        ///  if (loader == NULL) {
+        ///      fprintf(stderr, "Failed: %s\n", xybrid_last_error());
+        ///      return 1;
+        ///  }
+        ///  // Use loader...
+        ///  xybrid_model_loader_free(loader);
+        ///  ```
         /// </summary>
         [DllImport(__DllName, EntryPoint = "xybrid_model_loader_from_directory", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern XybridModelLoaderHandle* xybrid_model_loader_from_directory(byte* path);
 
         /// <summary>
+        ///  Create a model loader from a raw GGUF model file.
+        ///
+        ///  Auto-generates `model_metadata.json` by reading the GGUF binary header
+        ///  (architecture, context length), writes it to the file's parent directory
+        ///  if not already present, then loads from that directory.
+        ///
+        ///  # Parameters
+        ///
+        ///  - `path`: A null-terminated string containing the path to the GGUF file.
+        ///
+        ///  # Returns
+        ///
+        ///  A handle to the model loader, or null on failure.
+        ///  On failure, call `xybrid_last_error()` to get the error message.
+        ///
+        ///  # Example (C)
+        ///
+        ///  ```c
+        ///  XybridModelLoaderHandle* loader = xybrid_model_loader_from_model_file("/path/to/model.gguf");
+        ///  if (loader == NULL) {
+        ///      fprintf(stderr, "Failed: %s\n", xybrid_last_error());
+        ///      return 1;
+        ///  }
+        ///  XybridModelHandle* model = xybrid_model_loader_load(loader);
+        ///  // Use model...
+        ///  xybrid_model_loader_free(loader);
+        ///  ```
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "xybrid_model_loader_from_model_file", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern XybridModelLoaderHandle* xybrid_model_loader_from_model_file(byte* path);
+
+        /// <summary>
         ///  Create a model loader from a HuggingFace Hub repository.
         ///
         ///  Downloads model files from HuggingFace and caches them locally.
-        ///  Requires the `huggingface` feature flag at compile time.
+        ///  Model metadata is auto-generated if not present in the repository.
+        ///
+        ///  Requires the `huggingface` feature flag to be enabled at compile time.
+        ///
+        ///  # Parameters
+        ///
+        ///  - `repo`: A null-terminated string containing the HuggingFace repository ID
+        ///    (e.g., "xybrid-ai/kokoro-82m").
+        ///
+        ///  # Returns
+        ///
+        ///  A handle to the model loader, or null on failure.
+        ///  On failure, call `xybrid_last_error()` to get the error message.
+        ///
+        ///  # Example (C)
+        ///
+        ///  ```c
+        ///  XybridModelLoaderHandle* loader = xybrid_model_loader_from_huggingface("xybrid-ai/kokoro-82m");
+        ///  if (loader == NULL) {
+        ///      fprintf(stderr, "Failed: %s\n", xybrid_last_error());
+        ///      return 1;
+        ///  }
+        ///  // Use loader...
+        ///  xybrid_model_loader_free(loader);
+        ///  ```
         /// </summary>
         [DllImport(__DllName, EntryPoint = "xybrid_model_loader_from_huggingface", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern XybridModelLoaderHandle* xybrid_model_loader_from_huggingface(byte* repo);
@@ -207,13 +275,13 @@ namespace Xybrid.Native
         /// <summary>
         ///  Load a model using the loader.
         ///
-        ///  This function loads the model from the registry or local bundle,
+        ///  This function loads the model from the registry, local bundle, or directory,
         ///  depending on how the loader was created.
         ///
         ///  # Parameters
         ///
-        ///  - `handle`: A handle to the model loader created by `xybrid_model_loader_from_registry`
-        ///    or `xybrid_model_loader_from_bundle`.
+        ///  - `handle`: A handle to the model loader created by `xybrid_model_loader_from_registry`,
+        ///    `xybrid_model_loader_from_bundle`, or `xybrid_model_loader_from_directory`.
         ///
         ///  # Returns
         ///
@@ -1474,9 +1542,9 @@ namespace Xybrid.Native
     /// <summary>
     ///  Opaque handle to a model loader.
     ///
-    ///  This handle is created by `xybrid_model_loader_from_registry` or
-    ///  `xybrid_model_loader_from_bundle` and must be freed with
-    ///  `xybrid_model_loader_free`.
+    ///  This handle is created by `xybrid_model_loader_from_registry`,
+    ///  `xybrid_model_loader_from_bundle`, or `xybrid_model_loader_from_directory`
+    ///  and must be freed with `xybrid_model_loader_free`.
     /// </summary>
     [StructLayout(LayoutKind.Sequential)]
     internal unsafe partial struct XybridModelLoaderHandle

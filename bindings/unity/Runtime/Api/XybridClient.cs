@@ -120,5 +120,20 @@ namespace Xybrid
                 return loader.Load();
             }
         }
+
+        /// <summary>
+        /// Convenience method to load a model from a raw GGUF file.
+        /// Auto-generates metadata from the GGUF binary header.
+        /// </summary>
+        /// <param name="filePath">Path to the GGUF model file.</param>
+        /// <returns>A loaded model ready for inference.</returns>
+        /// <exception cref="XybridException">Thrown if loading fails.</exception>
+        public static Model LoadModelFromFile(string filePath)
+        {
+            using (var loader = ModelLoader.FromModelFile(filePath))
+            {
+                return loader.Load();
+            }
+        }
     }
 }

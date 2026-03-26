@@ -760,6 +760,106 @@ pub(crate) fn run_huggingface(
     Ok(())
 }
 
+/// Run inference on an arbitrary GGUF model file (auto-generates metadata).
+pub(crate) fn run_model_file(
+    gguf_path: &Path,
+    input_audio: Option<&PathBuf>,
+    input_text: Option<&str>,
+    voice: Option<&str>,
+    output_path: Option<&PathBuf>,
+    dry_run: bool,
+    trace_enabled: bool,
+    trace_export: Option<&PathBuf>,
+) -> Result<()> {
+    if trace_enabled {
+        crate::tracing_viz::reset_collector();
+    }
+
+    let gguf_path = gguf_path
+        .canonicalize()
+        .with_context(|| format!("GGUF file not found: {}", gguf_path.display()))?;
+
+    println!("🚀 Xybrid Model Runner (GGUF file)");
+    println!(
+        "📦 File: {}\n",
+        gguf_path.display().to_string().cyan().bold()
+    );
+
+    let metadata = xybrid_sdk::metadata_gen::generate_metadata_for_gguf_file(&gguf_path)
+        .map_err(|e| anyhow::anyhow!("Failed to generate metadata for GGUF file: {}", e))?;
+
+    println!("📋 Auto-generated metadata:");
+    println!("   Model ID: {}", metadata.model_id);
+    if let xybrid_core::execution::ExecutionTemplate::Gguf { context_length, .. } =
+        &metadata.execution_template
+    {
+        println!("   Context length: {}", context_length);
+    }
+    if let Some(arch) = metadata.metadata.get("architecture") {
+        println!("   Architecture: {}", arch);
+    }
+    println!();
+
+    let parent_dir = gguf_path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("Cannot determine parent directory of GGUF file"))?;
+
+    // Write metadata to parent dir so TemplateExecutor can find it
+    let metadata_path = parent_dir.join("model_metadata.json");
+    if !metadata_path.exists() {
+        let json = serde_json::to_string_pretty(&metadata)?;
+        fs::write(&metadata_path, &json)?;
+        println!(
+            "{}",
+            "⚠️  Generated model_metadata.json (review and adjust if needed)".yellow()
+        );
+        println!("   {}", metadata_path.display());
+        println!();
+    }
+
+    emit_pipeline_start_event(&metadata, "model-file");
+
+    if dry_run {
+        println!("🔎 Dry Run: Model inspection only");
+        println!("{}", "=".repeat(60));
+        println!("\nModel is valid and ready for execution.");
+        println!("Use without --dry-run to run inference.");
+        return Ok(());
+    }
+
+    let input = if let Some(audio_path) = input_audio {
+        println!("🎤 Loading audio file: {}", audio_path.display());
+        let audio_bytes = fs::read(audio_path)
+            .with_context(|| format!("Failed to read audio file: {}", audio_path.display()))?;
+        Envelope::new(EnvelopeKind::Audio(audio_bytes))
+    } else if let Some(text) = input_text {
+        println!("📝 Input text: \"{}\"", text);
+        let mut envelope = Envelope::new(EnvelopeKind::Text(text.to_string()));
+        if let Some(voice_id) = voice {
+            println!("🎙️  Voice: {}", voice_id);
+            envelope
+                .metadata
+                .insert("voice_id".to_string(), voice_id.to_string());
+        }
+        envelope
+    } else {
+        return Err(anyhow::anyhow!(
+            "No input provided. Use --input-audio <file> or --input-text <text>"
+        ));
+    };
+
+    let (output, elapsed) = run_inference(parent_dir, &metadata, &input, trace_enabled)?;
+
+    print_inference_results(&metadata, &output, elapsed, output_path)?;
+    emit_pipeline_complete_event(&metadata, &output, elapsed);
+
+    if trace_enabled {
+        print_trace_output(trace_enabled, trace_export)?;
+    }
+
+    Ok(())
+}
+
 fn fetch_or_cache(
     client: &RegistryClient,
     model_id: &str,

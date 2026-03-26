@@ -1010,6 +1010,117 @@ pub unsafe extern "C" fn xybrid_model_loader_from_directory(
     XybridModelLoaderHandle::from_boxed(loader)
 }
 
+/// Create a model loader from a raw GGUF model file.
+///
+/// Auto-generates `model_metadata.json` by reading the GGUF binary header
+/// (architecture, context length), writes it to the file's parent directory
+/// if not already present, then loads from that directory.
+///
+/// # Parameters
+///
+/// - `path`: A null-terminated string containing the path to the GGUF file.
+///
+/// # Returns
+///
+/// A handle to the model loader, or null on failure.
+/// On failure, call `xybrid_last_error()` to get the error message.
+///
+/// # Example (C)
+///
+/// ```c
+/// XybridModelLoaderHandle* loader = xybrid_model_loader_from_model_file("/path/to/model.gguf");
+/// if (loader == NULL) {
+///     fprintf(stderr, "Failed: %s\n", xybrid_last_error());
+///     return 1;
+/// }
+/// XybridModelHandle* model = xybrid_model_loader_load(loader);
+/// // Use model...
+/// xybrid_model_loader_free(loader);
+/// ```
+#[no_mangle]
+pub unsafe extern "C" fn xybrid_model_loader_from_model_file(
+    path: *const c_char,
+) -> *mut XybridModelLoaderHandle {
+    clear_last_error();
+
+    if path.is_null() {
+        set_last_error("path is null");
+        return std::ptr::null_mut();
+    }
+
+    let path_str = match CStr::from_ptr(path).to_str() {
+        Ok(s) => s.to_string(),
+        Err(_) => {
+            set_last_error("path is not valid UTF-8");
+            return std::ptr::null_mut();
+        }
+    };
+
+    if path_str.is_empty() {
+        set_last_error("path is empty");
+        return std::ptr::null_mut();
+    }
+
+    let gguf_path = std::path::Path::new(&path_str);
+
+    if !gguf_path.exists() {
+        set_last_error(&format!("GGUF file not found: {}", path_str));
+        return std::ptr::null_mut();
+    }
+
+    // Auto-generate metadata from GGUF headers
+    let metadata = match xybrid_sdk::metadata_gen::generate_metadata_for_gguf_file(gguf_path) {
+        Ok(m) => m,
+        Err(e) => {
+            set_last_error(&format!("Failed to generate metadata for GGUF file: {}", e));
+            return std::ptr::null_mut();
+        }
+    };
+
+    let model_id = metadata.model_id.clone();
+
+    // Write metadata to parent directory if not present
+    let parent_dir = match gguf_path.parent() {
+        Some(p) => p,
+        None => {
+            set_last_error("Cannot determine parent directory of GGUF file");
+            return std::ptr::null_mut();
+        }
+    };
+
+    let metadata_path = parent_dir.join("model_metadata.json");
+    if !metadata_path.exists() {
+        let json = match serde_json::to_string_pretty(&metadata) {
+            Ok(j) => j,
+            Err(e) => {
+                set_last_error(&format!("Failed to serialize metadata: {}", e));
+                return std::ptr::null_mut();
+            }
+        };
+        if let Err(e) = std::fs::write(&metadata_path, &json) {
+            set_last_error(&format!("Failed to write model_metadata.json: {}", e));
+            return std::ptr::null_mut();
+        }
+    }
+
+    // Load from the parent directory (which now has model_metadata.json + GGUF file)
+    let parent_str = parent_dir.to_string_lossy().to_string();
+    let sdk_loader = match ModelLoader::from_directory(&parent_str) {
+        Ok(loader) => loader,
+        Err(e) => {
+            set_last_error(&format!("Failed to create loader from directory: {}", e));
+            return std::ptr::null_mut();
+        }
+    };
+
+    let loader = Box::new(LoaderState {
+        loader: sdk_loader,
+        model_id,
+    });
+
+    XybridModelLoaderHandle::from_boxed(loader)
+}
+
 /// Create a model loader from a HuggingFace Hub repository.
 ///
 /// Downloads model files from HuggingFace and caches them locally.

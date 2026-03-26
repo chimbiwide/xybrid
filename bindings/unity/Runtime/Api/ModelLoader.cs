@@ -117,6 +117,37 @@ namespace Xybrid
         }
 
         /// <summary>
+        /// Creates a model loader from a raw GGUF model file.
+        /// Auto-generates <c>model_metadata.json</c> by reading the GGUF binary header
+        /// (architecture, context length), writes it to the file's parent directory
+        /// if not already present, then loads from that directory.
+        /// </summary>
+        /// <param name="filePath">Path to the GGUF model file.</param>
+        /// <returns>A new ModelLoader configured to load the GGUF model.</returns>
+        /// <exception cref="ArgumentNullException">Thrown if filePath is null.</exception>
+        /// <exception cref="XybridException">Thrown if the file does not exist or metadata generation fails.</exception>
+        public static unsafe ModelLoader FromModelFile(string filePath)
+        {
+            if (filePath == null)
+            {
+                throw new ArgumentNullException(nameof(filePath));
+            }
+
+            byte[] pathBytes = NativeHelpers.ToUtf8Bytes(filePath);
+
+            fixed (byte* pathPtr = pathBytes)
+            {
+                XybridModelLoaderHandle* handle = NativeMethods.xybrid_model_loader_from_model_file(pathPtr);
+                if (handle == null)
+                {
+                    NativeHelpers.ThrowLastError($"Failed to create loader for GGUF file '{filePath}'");
+                }
+
+                return new ModelLoader(handle);
+            }
+        }
+
+        /// <summary>
         /// Creates a model loader from a HuggingFace Hub repository.
         /// Downloads model files from HuggingFace and caches them locally.
         /// Model metadata is auto-generated if not present in the repository.

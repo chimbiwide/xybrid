@@ -116,30 +116,34 @@ enum Commands {
     /// Run a pipeline from a configuration file, predefined pipeline name, or model ID
     Run {
         /// Path to the pipeline configuration file (YAML)
-        #[arg(short, long, value_name = "FILE", conflicts_with_all = ["pipeline", "bundle", "model", "directory", "huggingface"])]
+        #[arg(short, long, value_name = "FILE", conflicts_with_all = ["pipeline", "bundle", "model", "directory", "huggingface", "model_file"])]
         config: Option<PathBuf>,
 
         /// Predefined pipeline name (e.g., "hiiipe")
-        #[arg(short, long, value_name = "NAME", conflicts_with_all = ["config", "bundle", "model", "directory", "huggingface"])]
+        #[arg(short, long, value_name = "NAME", conflicts_with_all = ["config", "bundle", "model", "directory", "huggingface", "model_file"])]
         pipeline: Option<String>,
 
         /// Path to a .xyb bundle file for direct execution
-        #[arg(short, long, value_name = "FILE", conflicts_with_all = ["config", "pipeline", "model", "directory", "huggingface"])]
+        #[arg(short, long, value_name = "FILE", conflicts_with_all = ["config", "pipeline", "model", "directory", "huggingface", "model_file"])]
         bundle: Option<PathBuf>,
 
         /// Model ID to run directly from registry (e.g., "kokoro-82m")
         /// Downloads the model if not cached, then runs inference
-        #[arg(short, long, value_name = "ID", conflicts_with_all = ["config", "pipeline", "bundle", "directory", "huggingface"])]
+        #[arg(short, long, value_name = "ID", conflicts_with_all = ["config", "pipeline", "bundle", "directory", "huggingface", "model_file"])]
         model: Option<String>,
 
         /// Path to a local model directory containing model_metadata.json
-        #[arg(short, long, value_name = "DIR", conflicts_with_all = ["config", "pipeline", "bundle", "model", "huggingface"])]
+        #[arg(short, long, value_name = "DIR", conflicts_with_all = ["config", "pipeline", "bundle", "model", "huggingface", "model_file"])]
         directory: Option<PathBuf>,
 
         /// HuggingFace repo to run (e.g., "DataikuNLP/kiji-pii-model-onnx")
         /// Downloads if not cached, auto-generates metadata if needed
-        #[arg(long, value_name = "REPO", conflicts_with_all = ["config", "pipeline", "bundle", "model", "directory"])]
+        #[arg(long, value_name = "REPO", conflicts_with_all = ["config", "pipeline", "bundle", "model", "directory", "model_file"])]
         huggingface: Option<String>,
+
+        /// Path to a local GGUF model file (auto-generates metadata)
+        #[arg(long, value_name = "PATH", conflicts_with_all = ["config", "pipeline", "bundle", "model", "directory", "huggingface"])]
+        model_file: Option<PathBuf>,
 
         /// Dry run the pipeline without executing it
         #[arg(long, default_value = "false")]
@@ -369,6 +373,7 @@ fn run_command(cli: Cli) -> Result<()> {
             model,
             directory,
             huggingface,
+            model_file,
             dry_run,
             policy,
             input_audio,
@@ -381,6 +386,19 @@ fn run_command(cli: Cli) -> Result<()> {
         } => {
             if trace {
                 tracing_viz::reset_collector();
+            }
+
+            if let Some(gguf_path) = model_file {
+                return commands::run::run_model_file(
+                    &gguf_path,
+                    input_audio.as_ref(),
+                    input_text.as_deref(),
+                    voice.as_deref(),
+                    output.as_ref(),
+                    dry_run,
+                    trace,
+                    trace_export.as_ref(),
+                );
             }
 
             if let Some(model_id) = model {
