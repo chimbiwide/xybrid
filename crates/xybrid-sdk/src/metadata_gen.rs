@@ -382,8 +382,29 @@ fn detect_model_files(dir: &Path) -> Vec<ModelFileInfo> {
         });
     }
 
-    // Sort by size descending (largest model file first — likely the main one)
-    files.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes));
+    // Sort GGUF files by quantization preference (Q4_K_M first), others by size descending.
+    // This ensures auto-generation picks the best edge-friendly variant, not the largest.
+    const GGUF_QUANT_PREFERENCE: &[&str] = &[
+        "Q4_K_M", "Q4_K_S", "Q4_0", "Q5_K_M", "Q5_K_S", "Q6_K", "Q8_0", "F16", "BF16", "F32",
+    ];
+
+    files.sort_by(|a, b| {
+        // GGUF files: sort by quantization preference
+        if a.format == ModelFormat::Gguf && b.format == ModelFormat::Gguf {
+            let rank_a = GGUF_QUANT_PREFERENCE
+                .iter()
+                .position(|q| a.filename.to_uppercase().contains(q))
+                .unwrap_or(usize::MAX);
+            let rank_b = GGUF_QUANT_PREFERENCE
+                .iter()
+                .position(|q| b.filename.to_uppercase().contains(q))
+                .unwrap_or(usize::MAX);
+            rank_a.cmp(&rank_b)
+        } else {
+            // Non-GGUF: sort by size descending (largest first)
+            b.size_bytes.cmp(&a.size_bytes)
+        }
+    });
     files
 }
 

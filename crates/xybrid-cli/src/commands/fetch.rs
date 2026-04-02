@@ -70,7 +70,7 @@ pub(crate) fn handle_fetch_huggingface_command(repo: &str) -> Result<()> {
     let cache_dir =
         dirs::home_dir().map(|h| h.join(".xybrid").join("cache").join("hf").join(&sanitized));
 
-    let loader = xybrid_sdk::ModelLoader::from_huggingface(repo);
+    let loader = xybrid_sdk::ModelLoader::from_huggingface_parsed(repo);
     let model = loader.load().context(format!(
         "Failed to load model from HuggingFace repo '{}'",
         repo

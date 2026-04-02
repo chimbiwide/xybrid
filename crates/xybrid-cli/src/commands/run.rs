@@ -713,7 +713,7 @@ pub(crate) fn run_huggingface(
     println!("🤗 Repo: {}\n", repo.cyan().bold());
 
     println!("📥 Loading from HuggingFace (downloading if needed)...");
-    let loader = xybrid_sdk::ModelLoader::from_huggingface(repo);
+    let loader = xybrid_sdk::ModelLoader::from_huggingface_parsed(repo);
     let model = loader.load().context(format!(
         "Failed to load model from HuggingFace repo '{}'",
         repo

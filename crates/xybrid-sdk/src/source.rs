@@ -102,6 +102,7 @@ pub enum ModelSource {
     /// ModelSource::HuggingFace {
     ///     repo: "xybrid-ai/kokoro-82m".to_string(),
     ///     revision: None, // Uses default branch
+    ///     variant: None, // Auto-selects Q4_K_M for GGUF repos
     /// }
     /// ```
     HuggingFace {
@@ -109,6 +110,9 @@ pub enum ModelSource {
         repo: String,
         /// Git revision (branch, tag, or commit hash). Uses default branch if None.
         revision: Option<String>,
+        /// Preferred GGUF quantization variant (e.g., "Q4_K_M", "Q8_0", "F16").
+        /// If None, defaults to Q4_K_M when multiple GGUF files are available.
+        variant: Option<String>,
     },
 }
 
@@ -199,6 +203,7 @@ impl ModelSource {
         ModelSource::HuggingFace {
             repo: repo.into(),
             revision: None,
+            variant: None,
         }
     }
 
@@ -207,6 +212,40 @@ impl ModelSource {
         ModelSource::HuggingFace {
             repo: repo.into(),
             revision: Some(revision.into()),
+            variant: None,
+        }
+    }
+
+    /// Create a HuggingFace Hub source with explicit variant (GGUF quantization).
+    ///
+    /// The variant selects which GGUF file to download from repos with multiple
+    /// quantization options (e.g., "Q4_K_M", "Q8_0", "F16").
+    pub fn huggingface_with_variant(repo: impl Into<String>, variant: impl Into<String>) -> Self {
+        ModelSource::HuggingFace {
+            repo: repo.into(),
+            revision: None,
+            variant: Some(variant.into()),
+        }
+    }
+
+    /// Parse a HuggingFace repo string that may include a variant suffix.
+    ///
+    /// Supports the format `"org/repo:variant"` (e.g., `"LiquidAI/LFM2.5-350M-GGUF:Q8_0"`).
+    /// If no colon is present, returns the repo as-is with no variant.
+    pub fn parse_huggingface(input: &str) -> Self {
+        if let Some((repo, variant)) = input.rsplit_once(':') {
+            // Avoid treating "https://..." as variant syntax
+            if repo.contains('/') && !repo.contains("://") {
+                ModelSource::HuggingFace {
+                    repo: repo.to_string(),
+                    revision: None,
+                    variant: Some(variant.to_string()),
+                }
+            } else {
+                ModelSource::huggingface(input)
+            }
+        } else {
+            ModelSource::huggingface(input)
         }
     }
 
@@ -241,6 +280,14 @@ impl ModelSource {
         match self {
             ModelSource::LegacyRegistry { version, .. } => Some(version),
             ModelSource::HuggingFace { revision, .. } => revision.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// Get the preferred GGUF variant (if specified).
+    pub fn variant(&self) -> Option<&str> {
+        match self {
+            ModelSource::HuggingFace { variant, .. } => variant.as_deref(),
             _ => None,
         }
     }
@@ -332,6 +379,7 @@ mod tests {
         assert_eq!(source.source_type(), "huggingface");
         assert_eq!(source.model_id(), Some("xybrid-ai/kokoro-82m"));
         assert_eq!(source.version(), None);
+        assert_eq!(source.variant(), None);
     }
 
     #[test]
@@ -340,6 +388,27 @@ mod tests {
         assert_eq!(source.source_type(), "huggingface");
         assert_eq!(source.model_id(), Some("xybrid-ai/kokoro-82m"));
         assert_eq!(source.version(), Some("v1.0"));
+    }
+
+    #[test]
+    fn test_huggingface_source_with_variant() {
+        let source = ModelSource::huggingface_with_variant("LiquidAI/LFM2.5-350M-GGUF", "Q8_0");
+        assert_eq!(source.model_id(), Some("LiquidAI/LFM2.5-350M-GGUF"));
+        assert_eq!(source.variant(), Some("Q8_0"));
+    }
+
+    #[test]
+    fn test_parse_huggingface_with_variant() {
+        let source = ModelSource::parse_huggingface("LiquidAI/LFM2.5-350M-GGUF:Q8_0");
+        assert_eq!(source.model_id(), Some("LiquidAI/LFM2.5-350M-GGUF"));
+        assert_eq!(source.variant(), Some("Q8_0"));
+    }
+
+    #[test]
+    fn test_parse_huggingface_without_variant() {
+        let source = ModelSource::parse_huggingface("xybrid-ai/kokoro-82m");
+        assert_eq!(source.model_id(), Some("xybrid-ai/kokoro-82m"));
+        assert_eq!(source.variant(), None);
     }
 
     #[test]

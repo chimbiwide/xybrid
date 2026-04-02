@@ -40,7 +40,7 @@ pub(crate) fn handle_repl_command(
     // --huggingface: load from HuggingFace repo
     let stages = if let Some(ref repo) = huggingface {
         println!("🤗 Loading from HuggingFace: {}", repo);
-        let loader = ModelLoader::from_huggingface(repo);
+        let loader = ModelLoader::from_huggingface_parsed(repo);
         let _model = loader.load().context(format!(
             "Failed to load model from HuggingFace repo '{}'",
             repo

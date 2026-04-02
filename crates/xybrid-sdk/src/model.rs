@@ -209,6 +209,47 @@ struct ModelHandle {
 ///     println!("Download: {:.1}%", progress * 100.0);
 /// })?;
 /// ```
+/// GGUF quantization preference order for automatic selection.
+/// Q4_K_M is the default — best quality/size tradeoff for edge devices.
+const GGUF_PREFERENCE_ORDER: &[&str] = &[
+    "Q4_K_M", "Q4_K_S", "Q4_0", "Q5_K_M", "Q5_K_S", "Q6_K", "Q8_0", "F16", "BF16", "F32",
+];
+
+/// Select the best GGUF file from a list based on user preference or default ranking.
+///
+/// If `variant` is specified, finds a file containing that quantization string (case-insensitive).
+/// Otherwise, selects the file matching the highest-priority quantization from `GGUF_PREFERENCE_ORDER`.
+fn select_gguf_variant(gguf_files: &[&str], variant: Option<&str>) -> SdkResult<String> {
+    if let Some(v) = variant {
+        let v_upper = v.to_uppercase();
+        // Find a file containing the variant string (case-insensitive)
+        if let Some(found) = gguf_files
+            .iter()
+            .find(|f| f.to_uppercase().contains(&v_upper))
+        {
+            return Ok(found.to_string());
+        }
+        return Err(SdkError::LoadError(format!(
+            "No GGUF file matching variant '{}'. Available: {}",
+            v,
+            gguf_files.join(", ")
+        )));
+    }
+
+    // Auto-select: try each preferred quantization in order
+    for pref in GGUF_PREFERENCE_ORDER {
+        if let Some(found) = gguf_files.iter().find(|f| f.to_uppercase().contains(pref)) {
+            return Ok(found.to_string());
+        }
+    }
+
+    // Fallback: pick the smallest file (likely the most quantized)
+    Ok(gguf_files
+        .first()
+        .ok_or_else(|| SdkError::LoadError("No GGUF files found".to_string()))?
+        .to_string())
+}
+
 #[derive(Debug, Clone)]
 pub struct ModelLoader {
     source: ModelSource,
@@ -375,6 +416,26 @@ impl ModelLoader {
         }
     }
 
+    /// Create loader from a HuggingFace repo string, parsing optional variant suffix.
+    ///
+    /// Supports `"org/repo:Q8_0"` syntax to select a specific GGUF quantization.
+    /// Without a variant, defaults to Q4_K_M for GGUF repos.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let loader = ModelLoader::from_huggingface_parsed("LiquidAI/LFM2.5-350M-GGUF:Q8_0");
+    /// let model = loader.load()?;
+    /// ```
+    pub fn from_huggingface_parsed(input: &str) -> Self {
+        let source = ModelSource::parse_huggingface(input);
+        let repo = source.model_id().unwrap_or(input).to_string();
+        Self {
+            source,
+            model_id: Some(repo),
+            version: None,
+        }
+    }
+
     /// Get the model ID (if known).
     pub fn model_id(&self) -> Option<&str> {
         self.model_id.as_deref()
@@ -432,9 +493,16 @@ impl ModelLoader {
             } => self.load_from_legacy_registry(url, model_id, version, platform.as_deref()),
             ModelSource::Bundle { path } => self.load_from_bundle(path),
             ModelSource::Directory { path } => self.load_from_directory(path),
-            ModelSource::HuggingFace { repo, revision } => {
-                self.load_from_huggingface(repo, revision.as_deref(), progress_callback)
-            }
+            ModelSource::HuggingFace {
+                repo,
+                revision,
+                variant,
+            } => self.load_from_huggingface(
+                repo,
+                revision.as_deref(),
+                variant.as_deref(),
+                progress_callback,
+            ),
         }
     }
 
@@ -541,13 +609,14 @@ impl ModelLoader {
 
     /// Load a model from HuggingFace Hub.
     ///
-    /// Downloads all model files to `~/.xybrid/cache/hf/{repo}/` and loads from there.
-    /// Uses hf-hub's built-in caching so subsequent calls are instant.
+    /// Only downloads the selected GGUF variant (defaults to Q4_K_M) plus essential
+    /// supporting files (config, tokenizer, README). Avoids downloading all variants.
     #[cfg(feature = "huggingface")]
     fn load_from_huggingface<F>(
         &self,
         repo: &str,
         revision: Option<&str>,
+        variant: Option<&str>,
         _progress_callback: F,
     ) -> SdkResult<XybridModel>
     where
@@ -596,19 +665,61 @@ impl ModelLoader {
             )));
         }
 
+        // Classify files by type to enable smart filtering
+        let all_filenames: Vec<&str> = siblings.iter().map(|s| s.rfilename.as_str()).collect();
+        let gguf_files: Vec<&str> = all_filenames
+            .iter()
+            .filter(|f| f.ends_with(".gguf"))
+            .copied()
+            .collect();
+
+        // If multiple GGUF files exist, select the best one instead of downloading all
+        let selected_gguf = if gguf_files.len() > 1 {
+            Some(select_gguf_variant(&gguf_files, variant)?)
+        } else {
+            None
+        };
+
+        if let Some(ref selected) = selected_gguf {
+            log::info!(
+                target: "xybrid_sdk",
+                "Selected GGUF variant: {} (from {} available)",
+                selected, gguf_files.len()
+            );
+        }
+
         // Create cache directory
         std::fs::create_dir_all(&cache_dir)?;
 
-        // Download each file and symlink/copy to our cache directory
-        let total_files = siblings.len();
-        for (i, sibling) in siblings.iter().enumerate() {
-            let filename = &sibling.rfilename;
+        // Filter to only files we need
+        let files_to_download: Vec<&str> = all_filenames
+            .iter()
+            .filter(|filename| {
+                // Skip hidden files and directories
+                if filename.starts_with('.') || filename.ends_with('/') {
+                    return false;
+                }
 
-            // Skip directories and hidden files
-            if filename.starts_with('.') || filename.ends_with('/') {
-                continue;
-            }
+                // If we have a selected GGUF, skip other GGUF files
+                if let Some(ref selected) = selected_gguf {
+                    if filename.ends_with(".gguf") && **filename != *selected {
+                        return false;
+                    }
+                }
 
+                // Skip non-essential files (LICENSE, subdirectories like leap/)
+                let dominated_by_model = selected_gguf.is_some() || gguf_files.len() == 1;
+                if dominated_by_model {
+                    Self::is_essential_file(filename)
+                } else {
+                    true
+                }
+            })
+            .copied()
+            .collect();
+
+        let total_files = files_to_download.len();
+        for (i, filename) in files_to_download.iter().enumerate() {
             log::debug!(target: "xybrid_sdk", "Downloading [{}/{}]: {}", i + 1, total_files, filename);
 
             // Report approximate progress
@@ -695,6 +806,7 @@ impl ModelLoader {
         &self,
         _repo: &str,
         _revision: Option<&str>,
+        _variant: Option<&str>,
         _progress_callback: F,
     ) -> SdkResult<XybridModel>
     where
@@ -723,6 +835,39 @@ impl ModelLoader {
         // Sanitize repo name for filesystem (e.g., "xybrid-ai/kokoro-82m" -> "xybrid-ai--kokoro-82m")
         let sanitized = repo.replace('/', "--");
         Ok(base_cache.join(sanitized))
+    }
+
+    /// Check if a file is essential and should always be downloaded.
+    ///
+    /// Essential files are model files (.gguf, .onnx, .safetensors), metadata files
+    /// (config.json, tokenizer, vocab), and the README (for model card parsing).
+    /// Non-essential files (LICENSE, leap/, etc.) are skipped.
+    fn is_essential_file(filename: &str) -> bool {
+        // Model files
+        if filename.ends_with(".gguf")
+            || filename.ends_with(".onnx")
+            || filename.ends_with(".safetensors")
+        {
+            return true;
+        }
+
+        // Metadata and supporting files
+        let basename = filename.rsplit('/').next().unwrap_or(filename);
+        matches!(
+            basename,
+            "model_metadata.json"
+                | "config.json"
+                | "tokenizer.json"
+                | "tokenizer_config.json"
+                | "special_tokens_map.json"
+                | "vocab.json"
+                | "vocab.txt"
+                | "tokens.txt"
+                | "merges.txt"
+                | "preprocessor_config.json"
+                | "generation_config.json"
+                | "README.md"
+        )
     }
 
     fn load_from_directory(&self, path: &PathBuf) -> SdkResult<XybridModel> {

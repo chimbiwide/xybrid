@@ -126,8 +126,9 @@ enum Commands {
         #[arg(short, long, value_name = "ID", conflicts_with = "huggingface")]
         model: Option<String>,
 
-        /// HuggingFace repo to fetch (e.g., "DataikuNLP/kiji-pii-model-onnx")
-        #[arg(long, value_name = "REPO", conflicts_with = "model")]
+        /// HuggingFace repo to fetch (e.g., "LiquidAI/LFM2.5-350M-GGUF:Q4_K_M")
+        /// Append :VARIANT to select a specific GGUF quantization (defaults to Q4_K_M)
+        #[arg(long, value_name = "REPO[:VARIANT]", conflicts_with = "model")]
         huggingface: Option<String>,
 
         /// Target platform (auto-detected if not specified)
@@ -162,9 +163,9 @@ enum Commands {
         #[arg(short, long, value_name = "DIR", conflicts_with_all = ["config", "pipeline", "bundle", "model", "huggingface", "model_file"])]
         directory: Option<PathBuf>,
 
-        /// HuggingFace repo to run (e.g., "DataikuNLP/kiji-pii-model-onnx")
-        /// Downloads if not cached, auto-generates metadata if needed
-        #[arg(long, value_name = "REPO", conflicts_with_all = ["config", "pipeline", "bundle", "model", "directory", "model_file"])]
+        /// HuggingFace repo to run (e.g., "LiquidAI/LFM2.5-350M-GGUF:Q4_K_M")
+        /// Append :VARIANT to select a specific GGUF quantization (defaults to Q4_K_M)
+        #[arg(long, value_name = "REPO[:VARIANT]", conflicts_with_all = ["config", "pipeline", "bundle", "model", "directory", "model_file"])]
         huggingface: Option<String>,
 
         /// Path to a local GGUF model file (auto-generates metadata)
@@ -222,9 +223,9 @@ enum Commands {
         #[arg(long, value_name = "PATH", conflicts_with_all = ["config", "model", "huggingface"])]
         model_file: Option<PathBuf>,
 
-        /// HuggingFace repo to run (e.g., "prism-ml/Bonsai-8B-gguf")
-        /// Downloads if not cached, auto-generates metadata if needed
-        #[arg(long, value_name = "REPO", conflicts_with_all = ["config", "model", "model_file"])]
+        /// HuggingFace repo to run (e.g., "LiquidAI/LFM2.5-350M-GGUF:Q8_0")
+        /// Append :VARIANT to select a specific GGUF quantization (defaults to Q4_K_M)
+        #[arg(long, value_name = "REPO[:VARIANT]", conflicts_with_all = ["config", "model", "model_file"])]
         huggingface: Option<String>,
 
         /// Voice ID for TTS models (e.g., "af_bella", "am_adam")
