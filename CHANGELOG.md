@@ -13,6 +13,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.0-beta9] - 2026-04-02
+
+### Added
+
+- **Custom model loading** (#15): `fromDirectory()` exposed in all SDK bindings (Flutter, Kotlin, Swift, Unity), `fromHuggingFace()` in Rust SDK with auto-generated `model_metadata.json`, JSON Schema published
+- **`xybrid init` command** (#18): Auto-generate `model_metadata.json` by inspecting ONNX/GGUF/SafeTensors model files
+- **HuggingFace models in REPL mode** (#20): Use HuggingFace models directly in interactive CLI sessions
+- **`xybrid run <file>` command**: Run inference directly on a model file
+- **LFM2.5-350M model spec**: Liquid AI passthrough model added to registry
+- **CLI UI refresh**: Updated welcome screen, improved token/latency display, general UI cleanup
+
+### Fixed
+
+- **Android arm64 performance regression**: Enable dotprod GEMM kernels (`GGML_CPU_ARM_ARCH=8.2`) — fixes 3-5x throughput drop on Cortex-A76+ devices (Snapdragon 855+, Tensor G1+)
+- **Smart GGUF variant selection**: Better variant matching when loading from HuggingFace
+- **Flutter binding version hash**: Fixed cargokit static hash not updating across releases
+- **CI test gating**: Fixture validation and init tests now skip gracefully when model files are unavailable
+
+---
+
 ## [0.1.0-beta8] - 2026-03-24
 
 ### Fixed

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.0-beta9
+
+* Added `fromDirectory()` for loading custom local models
+* Added `fromHuggingFace()` for loading models directly from HuggingFace Hub
+* Fixed cargokit version hash not triggering rebuilds across releases
+
 ## 0.1.0-beta8
 
 * Fixed LLM model loading failing with "Unknown frame descriptor" on all platforms — passthrough GGUF models now load correctly (#16)

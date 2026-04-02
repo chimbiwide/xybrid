@@ -102,7 +102,11 @@ pub fn brand() {
         let bot_y = py * 2 + 1;
 
         let top_row = &mask[top_y];
-        let bot_row = if bot_y < rows { Some(&mask[bot_y]) } else { None };
+        let bot_row = if bot_y < rows {
+            Some(&mask[bot_y])
+        } else {
+            None
+        };
 
         // Alternating scanlines: even source rows are bright, odd are dark
         let top_bright = top_y % 2 == 0;
