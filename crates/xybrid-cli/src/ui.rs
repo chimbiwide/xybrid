@@ -46,64 +46,129 @@ pub fn value(s: &str) -> ColoredString {
 
 // ── Brand wordmark ───────────────────────────────────────────
 
-const LOGO: &[&str] = &[
-    r"               __         _     __",
-    r"   _  ____  __/ /_  _____(_)___/ /",
-    r"  | |/_/ / / / __ \/ ___/ / __  / ",
-    r" _>  </ /_/ / /_/ / /  / / /_/ /  ",
-    r"/_/|_|\__, /_.___/_/  /_/\__,_/   ",
-    r"     /____/                       ",
+/// The X logo mask — downsampled from the actual xybrid logo.
+/// @ = filled (X shape), space = empty. 24 cols x 23 rows.
+/// Rows are paired 2:1 into half-block characters for rendering.
+const LOGO_MASK: &[&str] = &[
+    "                  @@@@@@",
+    "                 @@@@@@@",
+    "                 @@@@@@ ",
+    "    @@@@@       @@@@@@  ",
+    "    @@@@@@     @@@@@@@  ",
+    "     @@@@@    @@@@@@@   ",
+    "      @@@@@   @@@@@@    ",
+    "      @@@@@@ @@@@@@     ",
+    "       @@@@@@@@@@@      ",
+    "        @@@@@@@@@@      ",
+    "         @@@@@@@@       ",
+    "          @@@@@@        ",
+    "         @@@@@@@        ",
+    "        @@@@@@@@@       ",
+    "       @@@@@@@@@@@      ",
+    "      @@@@@@ @@@@@@     ",
+    "     @@@@@@@ @@@@@@@    ",
+    "    @@@@@@@   @@@@@@@   ",
+    "    @@@@@@     @@@@@@@  ",
+    "   @@@@@@@     @@@@@@@@ ",
+    "  @@@@@@@       @@@@@@@@",
+    " @@@@@@@         @@@@@@@",
+    "@@@@@@@                 ",
 ];
 
-// Shadow is the same art shifted right by 1 char.
-const LOGO_SHADOW: &[&str] = &[
-    r"                __         _     __",
-    r"    _  ____  __/ /_  _____(_)___/ /",
-    r"   | |/_/ / / / __ \/ ___/ / __  / ",
-    r"  _>  </ /_/ / /_/ / /  / / /_/ /  ",
-    r" /_/|_|\__, /_.___/_/  /_/\__,_/   ",
-    r"      /____/                       ",
-];
-
-/// Print the branded xybrid wordmark with gradient and depth shadow.
+/// Print the branded xybrid logo with gradient and engraving lines.
+///
+/// Renders the X logo from the mask using Unicode half-block characters
+/// (▀ ▄ █) for double vertical resolution, with:
+/// - Blue→purple horizontal gradient
+/// - Alternating bright/dark rows for an engraved depth effect
 pub fn brand() {
-    // Gradient ramp: blue (90,160,255) → purple (180,110,255)
-    let max_len = LOGO.iter().map(|l| l.len()).max().unwrap_or(1);
+    let cols = 24;
+    let mask: Vec<Vec<bool>> = LOGO_MASK
+        .iter()
+        .map(|line| {
+            let mut row: Vec<bool> = line.chars().map(|c| c == '@').collect();
+            row.resize(cols, false);
+            row
+        })
+        .collect();
+
+    let rows = mask.len();
+    let paired_h = rows.div_ceil(2);
 
     println!();
 
-    for (line, shadow_line) in LOGO.iter().zip(LOGO_SHADOW.iter()) {
-        let fg: Vec<char> = line.chars().collect();
-        let bg: Vec<char> = shadow_line.chars().collect();
-        let width = fg.len().max(bg.len());
+    for py in 0..paired_h {
+        let top_y = py * 2;
+        let bot_y = py * 2 + 1;
 
-        let mut out = String::from("  ");
-        for i in 0..width {
-            let fc = fg.get(i).copied().unwrap_or(' ');
-            let bc = bg.get(i).copied().unwrap_or(' ');
+        let top_row = &mask[top_y];
+        let bot_row = if bot_y < rows { Some(&mask[bot_y]) } else { None };
 
-            if fc != ' ' {
-                // Foreground: gradient color
-                let t = i as f32 / max_len as f32;
-                let r = lerp(90, 180, t);
-                let g = lerp(160, 110, t);
-                let b = lerp(255, 255, t);
-                out.push_str(&format!("{}", fc.to_string().truecolor(r, g, b).bold()));
-            } else if bc != ' ' {
-                // Shadow: dim, gives depth
-                out.push_str(&format!("{}", bc.to_string().truecolor(45, 42, 55)));
-            } else {
+        // Alternating scanlines: even source rows are bright, odd are dark
+        let top_bright = top_y % 2 == 0;
+        let bot_bright = bot_y % 2 == 0;
+
+        let mut out = String::from("      ");
+        for (px, &top) in top_row.iter().enumerate().take(cols) {
+            let bot = bot_row.is_some_and(|r| r[px]);
+
+            if !top && !bot {
                 out.push(' ');
+                continue;
+            }
+
+            let t = px as f32 / cols as f32;
+            // Base gradient: blue (70,140,255) → purple (190,70,240)
+            let base_r = lerp(70, 190, t);
+            let base_g = lerp(140, 70, t);
+            let base_b = lerp(255, 240, t);
+
+            match (top, bot) {
+                (true, true) => {
+                    // Both filled — use ▀ with top color as fg, bot color as bg
+                    // This lets each half-row have its own brightness
+                    let (tr, tg, tb) = scanline(base_r, base_g, base_b, top_bright);
+                    let (br, bg, bb) = scanline(base_r, base_g, base_b, bot_bright);
+                    out.push_str(&format!(
+                        "{}",
+                        "▀".truecolor(tr, tg, tb).on_truecolor(br, bg, bb)
+                    ));
+                }
+                (true, false) => {
+                    let (r, g, b) = scanline(base_r, base_g, base_b, top_bright);
+                    out.push_str(&format!("{}", "▀".truecolor(r, g, b)));
+                }
+                (false, true) => {
+                    let (r, g, b) = scanline(base_r, base_g, base_b, bot_bright);
+                    out.push_str(&format!("{}", "▄".truecolor(r, g, b)));
+                }
+                _ => unreachable!(),
             }
         }
         println!("{}", out);
     }
 }
 
-/// Print the branded wordmark with a version subtitle.
+/// Apply scanline brightness: bright rows get full color, dark rows are dimmed.
+fn scanline(r: u8, g: u8, b: u8, bright: bool) -> (u8, u8, u8) {
+    if bright {
+        (r, g, b)
+    } else {
+        // Darken to ~55% for the engraving line effect
+        (
+            (r as u16 * 55 / 100) as u8,
+            (g as u16 * 55 / 100) as u8,
+            (b as u16 * 55 / 100) as u8,
+        )
+    }
+}
+
+/// Print the branded logo with a version subtitle.
 pub fn brand_with_version(version: &str) {
     brand();
-    println!("  {}", format!("v{}", version).truecolor(80, 80, 100));
+    let label = format!("      xybrid v{}", version);
+    println!("{}", label.truecolor(80, 80, 100));
+    println!();
 }
 
 fn lerp(a: u8, b: u8, t: f32) -> u8 {
