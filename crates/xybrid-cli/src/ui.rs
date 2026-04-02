@@ -44,6 +44,73 @@ pub fn value(s: &str) -> ColoredString {
     s.truecolor(100, 220, 220)
 }
 
+// ── Brand wordmark ───────────────────────────────────────────
+
+const LOGO: &[&str] = &[
+    r"               __         _     __",
+    r"   _  ____  __/ /_  _____(_)___/ /",
+    r"  | |/_/ / / / __ \/ ___/ / __  / ",
+    r" _>  </ /_/ / /_/ / /  / / /_/ /  ",
+    r"/_/|_|\__, /_.___/_/  /_/\__,_/   ",
+    r"     /____/                       ",
+];
+
+// Shadow is the same art shifted right by 1 char.
+const LOGO_SHADOW: &[&str] = &[
+    r"                __         _     __",
+    r"    _  ____  __/ /_  _____(_)___/ /",
+    r"   | |/_/ / / / __ \/ ___/ / __  / ",
+    r"  _>  </ /_/ / /_/ / /  / / /_/ /  ",
+    r" /_/|_|\__, /_.___/_/  /_/\__,_/   ",
+    r"      /____/                       ",
+];
+
+/// Print the branded xybrid wordmark with gradient and depth shadow.
+pub fn brand() {
+    // Gradient ramp: blue (90,160,255) → purple (180,110,255)
+    let max_len = LOGO.iter().map(|l| l.len()).max().unwrap_or(1);
+
+    println!();
+
+    for (line, shadow_line) in LOGO.iter().zip(LOGO_SHADOW.iter()) {
+        let fg: Vec<char> = line.chars().collect();
+        let bg: Vec<char> = shadow_line.chars().collect();
+        let width = fg.len().max(bg.len());
+
+        let mut out = String::from("  ");
+        for i in 0..width {
+            let fc = fg.get(i).copied().unwrap_or(' ');
+            let bc = bg.get(i).copied().unwrap_or(' ');
+
+            if fc != ' ' {
+                // Foreground: gradient color
+                let t = i as f32 / max_len as f32;
+                let r = lerp(90, 180, t);
+                let g = lerp(160, 110, t);
+                let b = lerp(255, 255, t);
+                out.push_str(&format!("{}", fc.to_string().truecolor(r, g, b).bold()));
+            } else if bc != ' ' {
+                // Shadow: dim, gives depth
+                out.push_str(&format!("{}", bc.to_string().truecolor(45, 42, 55)));
+            } else {
+                out.push(' ');
+            }
+        }
+        println!("{}", out);
+    }
+}
+
+/// Print the branded wordmark with a version subtitle.
+pub fn brand_with_version(version: &str) {
+    brand();
+    println!("  {}", format!("v{}", version).truecolor(80, 80, 100));
+}
+
+fn lerp(a: u8, b: u8, t: f32) -> u8 {
+    let t = t.clamp(0.0, 1.0);
+    (a as f32 + (b as f32 - a as f32) * t) as u8
+}
+
 // ── Box drawing ──────────────────────────────────────────────
 
 /// Print a branded header with the xybrid name and a section title.

@@ -33,7 +33,8 @@ pub(crate) fn handle_repl_command(
 ) -> Result<()> {
     use std::io::{self, Write};
 
-    ui::header("REPL Mode");
+    ui::brand_with_version(env!("CARGO_PKG_VERSION"));
+    println!();
     ui::hint("Models loaded once and kept warm for fast inference");
     ui::hint("Type 'quit' or 'exit' to exit. Type 'help' for commands.");
 
