@@ -15,6 +15,10 @@ use xybrid_core::pipeline_config::PipelineConfig;
 use xybrid_sdk::model::ModelLoader;
 use xybrid_sdk::registry_client::RegistryClient;
 
+use colored::Colorize;
+
+use crate::ui;
+
 /// Interactive REPL mode - keeps models loaded for fast repeated inference.
 pub(crate) fn handle_repl_command(
     config: Option<PathBuf>,
@@ -29,17 +33,16 @@ pub(crate) fn handle_repl_command(
 ) -> Result<()> {
     use std::io::{self, Write};
 
-    println!("🚀 Xybrid REPL Mode");
-    println!("{}", "=".repeat(60));
-    println!("Models will be loaded once and kept warm for fast inference.");
-    println!("Type 'quit' or 'exit' to exit. Type 'help' for commands.");
+    ui::header("REPL Mode");
+    ui::hint("Models loaded once and kept warm for fast inference");
+    ui::hint("Type 'quit' or 'exit' to exit. Type 'help' for commands.");
 
     print_streaming_status(stream);
     println!();
 
     // --huggingface: load from HuggingFace repo
     let stages = if let Some(ref repo) = huggingface {
-        println!("🤗 Loading from HuggingFace: {}", repo);
+        let sp = ui::spinner(&format!("Loading from HuggingFace: {}...", repo));
         let loader = ModelLoader::from_huggingface_parsed(repo);
         let _model = loader.load().context(format!(
             "Failed to load model from HuggingFace repo '{}'",
@@ -54,7 +57,8 @@ pub(crate) fn handle_repl_command(
             .join("hf")
             .join(&sanitized);
 
-        println!("✅ Model loaded from HuggingFace");
+        sp.finish_and_clear();
+        ui::ok("Model loaded from HuggingFace");
 
         let mut stage = StageDescriptor::new(_model.model_id());
         stage.bundle_path = Some(cache_dir.to_string_lossy().to_string());
@@ -72,16 +76,16 @@ pub(crate) fn handle_repl_command(
             .parent()
             .ok_or_else(|| anyhow::anyhow!("Cannot determine parent directory of GGUF file"))?;
 
-        println!("📦 Loading local GGUF: {}", gguf_path.display());
+        ui::kv("GGUF", &gguf_path.display().to_string());
         if verbose > 0 {
-            println!("   Model ID: {}", metadata.model_id);
+            ui::kv("Model ID", &metadata.model_id);
             if let xybrid_core::execution::ExecutionTemplate::Gguf { context_length, .. } =
                 &metadata.execution_template
             {
-                println!("   Context length: {}", context_length);
+                ui::kv("Context", &context_length.to_string());
             }
             if let Some(arch) = metadata.metadata.get("architecture") {
-                println!("   Architecture: {}", arch);
+                ui::kv("Architecture", &arch.to_string());
             }
         }
 
@@ -92,7 +96,7 @@ pub(crate) fn handle_repl_command(
             let json = serde_json::to_string_pretty(&metadata)?;
             fs::write(&metadata_path, &json)?;
             if verbose > 0 {
-                println!("   Generated model_metadata.json");
+                ui::hint("Generated model_metadata.json");
             }
         }
 
@@ -137,10 +141,10 @@ pub(crate) fn handle_repl_command(
 
         if let Ok(model) = model_result {
             if model.is_llm() {
-                println!("💬 LLM detected - conversation context enabled");
+                ui::ok("LLM detected — conversation context enabled");
                 let mut ctx = ConversationContext::new();
                 if let Some(ref prompt) = system_prompt {
-                    println!("📋 System prompt: {}", prompt);
+                    ui::kv("System", prompt);
                     ctx = ctx.with_system(
                         Envelope::new(EnvelopeKind::Text(prompt.clone()))
                             .with_role(MessageRole::System),
@@ -148,7 +152,7 @@ pub(crate) fn handle_repl_command(
                 }
                 conversation_context = Some(ctx);
                 if verbose > 0 {
-                    println!("   (Use 'history' to view conversation, 'clear' to reset)");
+                    ui::hint("Use 'history' to view conversation, 'clear' to reset");
                 }
             }
             #[cfg(any(feature = "llm-mistral", feature = "llm-llamacpp"))]
@@ -174,12 +178,13 @@ pub(crate) fn handle_repl_command(
 
     warmup_models(&mut orchestrator, &stages, &metrics, &availability_fn);
 
-    println!("\nEnter text and press Enter to run inference.");
-    println!("{}", "=".repeat(60));
+    println!();
+    ui::hint("Enter text and press Enter to run inference");
+    println!("  {}", "─".repeat(50).truecolor(60, 60, 70));
 
     let stdin = io::stdin();
     loop {
-        print!("\n> ");
+        print!("\n  {} ", "❯".truecolor(120, 180, 255).bold());
         io::stdout().flush()?;
 
         let mut input_line = String::new();
@@ -210,10 +215,10 @@ pub(crate) fn handle_repl_command(
         if let Some(ref mut ctx) = conversation_context {
             ctx.push(input.clone());
             if verbose > 1 {
-                println!(
-                    "📝 Added user message to context (total: {} messages)",
+                ui::hint(&format!(
+                    "Added user message to context (total: {} messages)",
                     ctx.history().len()
-                );
+                ));
             }
         }
 
@@ -224,12 +229,14 @@ pub(crate) fn handle_repl_command(
         let use_streaming = {
             let can_stream = stream && stages.len() == 1 && stages[0].bundle_path.is_some();
             if stream && !can_stream {
-                eprintln!("⚠️  Streaming conditions not met:");
-                eprintln!("   - stages.len() = {} (need 1)", stages.len());
-                eprintln!(
-                    "   - bundle_path = {:?}",
-                    stages.first().map(|s| &s.bundle_path)
-                );
+                ui::warning("Streaming conditions not met");
+                if verbose > 0 {
+                    ui::hint(&format!("stages.len() = {} (need 1)", stages.len()));
+                    ui::hint(&format!(
+                        "bundle_path = {:?}",
+                        stages.first().map(|s| &s.bundle_path)
+                    ));
+                }
             }
             can_stream
         };
@@ -237,8 +244,8 @@ pub(crate) fn handle_repl_command(
         #[cfg(not(any(feature = "llm-mistral", feature = "llm-llamacpp")))]
         let use_streaming = {
             if stream {
-                eprintln!("⚠️  Streaming requested but LLM features not enabled.");
-                eprintln!("   Build with: --features llm-llamacpp (or llm-mistral)");
+                ui::warning("Streaming requested but LLM features not enabled");
+                ui::hint("Build with: --features llm-llamacpp (or llm-mistral)");
             }
             false
         };
@@ -279,11 +286,11 @@ pub(crate) fn handle_repl_command(
 fn print_streaming_status(stream: bool) {
     #[cfg(any(feature = "llm-mistral", feature = "llm-llamacpp"))]
     if stream {
-        println!("📡 Token streaming: ENABLED");
+        ui::ok("Token streaming: enabled");
     }
     #[cfg(not(any(feature = "llm-mistral", feature = "llm-llamacpp")))]
     if stream {
-        println!("⚠️  Token streaming: NOT AVAILABLE (LLM features not compiled)");
+        ui::warning("Token streaming: not available (LLM features not compiled)");
     }
 }
 
@@ -295,10 +302,8 @@ fn load_stages(
     let mut stages = Vec::new();
 
     if let Some(ref config) = pipeline_config {
-        println!(
-            "📋 Pipeline: {}",
-            config.name.as_deref().unwrap_or("unnamed")
-        );
+        let name = config.name.as_deref().unwrap_or("unnamed");
+        ui::kv("Pipeline", name);
         for stage_config in &config.stages {
             let model_id = stage_config.model_id();
             let mut desc = StageDescriptor::new(&model_id);
@@ -309,7 +314,7 @@ fn load_stages(
             stages.push(desc);
         }
     } else if let Some(ref model_id) = model_id {
-        println!("📦 Model: {}", model_id);
+        ui::kv("Model", model_id);
         let mut desc = StageDescriptor::new(model_id);
         ensure_model_cached(&mut desc, model_id, client)?;
         stages.push(desc);
@@ -324,20 +329,14 @@ fn ensure_model_cached(
     client: &RegistryClient,
 ) -> Result<()> {
     if !client.is_cached(model_id, None).unwrap_or(false) {
-        println!("📥 Downloading model: {}", model_id);
-        use indicatif::{ProgressBar, ProgressStyle};
         let resolved = client.resolve(model_id, None)?;
-        let pb = ProgressBar::new(resolved.size_bytes);
-        pb.set_style(
-            ProgressStyle::default_bar()
-                .template("{spinner:.green} {msg} [{bar:40.cyan/blue}] {bytes}/{total_bytes}")
-                .unwrap(),
-        );
-        pb.set_message(model_id.to_string());
+        let pb = ui::download_bar(resolved.size_bytes, model_id);
+
         let model_dir = client.fetch_extracted(model_id, None, |p| {
             pb.set_position((p * resolved.size_bytes as f32) as u64);
         })?;
-        pb.finish_with_message(format!("{} ✓", model_id));
+        pb.finish_and_clear();
+        ui::ok(&format!("{} downloaded", model_id));
         desc.bundle_path = Some(model_dir.to_string_lossy().to_string());
     } else {
         let cache = xybrid_sdk::cache::CacheManager::new()?;
@@ -354,14 +353,20 @@ fn warmup_models(
     metrics: &xybrid_core::context::DeviceMetrics,
     availability_fn: &dyn Fn(&str) -> LocalAvailability,
 ) {
-    println!("\n⏳ Warming up models (this may take a moment)...");
+    let sp = ui::spinner("Warming up models...");
     let warmup_input = Envelope {
         kind: EnvelopeKind::Text("Hi".to_string()),
         metadata: std::collections::HashMap::new(),
     };
     match orchestrator.execute_pipeline(stages, &warmup_input, metrics, availability_fn) {
-        Ok(_) => println!("🔥 Models loaded and warm. Ready for input!"),
-        Err(e) => println!("⚠️  Warmup failed ({}), first query may be slow", e),
+        Ok(_) => {
+            sp.finish_and_clear();
+            ui::ok("Models loaded and warm. Ready for input!");
+        }
+        Err(e) => {
+            sp.finish_and_clear();
+            ui::warning(&format!("Warmup failed ({}), first query may be slow", e));
+        }
     }
 }
 
@@ -378,28 +383,34 @@ fn handle_special_command(
 ) -> SpecialCommandResult {
     match input.to_lowercase().as_str() {
         "quit" | "exit" | "q" => {
-            println!("👋 Goodbye!");
+            println!();
+            ui::hint("Goodbye!");
             SpecialCommandResult::Quit
         }
         "help" | "?" => {
-            println!("Commands:");
-            println!("  quit, exit, q  - Exit REPL");
-            println!("  help, ?        - Show this help");
+            println!();
+            ui::hint("Commands:");
+            println!("    {}  Exit REPL", ui::dim("quit, exit, q"));
+            println!("    {}       Show this help", ui::dim("help, ?"));
             if conversation_context.is_some() {
-                println!("  history        - Show conversation history (LLM only)");
-                println!("  clear          - Clear conversation history (LLM only)");
+                println!("    {}      Show conversation history", ui::dim("history"));
+                println!("    {}        Clear conversation history", ui::dim("clear"));
             }
-            println!("  <text>         - Run inference with the given text");
+            println!("    {}       Run inference", ui::dim("<text>"));
             SpecialCommandResult::Continue
         }
         "history" if conversation_context.is_some() => {
             let ctx = conversation_context.as_ref().unwrap();
             let history = ctx.history();
             if history.is_empty() {
-                println!("📜 No conversation history yet.");
+                ui::hint("No conversation history yet.");
             } else {
-                println!("📜 Conversation history ({} messages):", history.len());
-                println!("{}", "-".repeat(50));
+                println!();
+                ui::hint(&format!(
+                    "Conversation history ({} messages):",
+                    history.len()
+                ));
+                println!("  {}", "─".repeat(50).truecolor(60, 60, 70));
                 for (i, envelope) in history.iter().enumerate() {
                     let role = envelope.role().map(|r| r.as_str()).unwrap_or("unknown");
                     let text = match &envelope.kind {
@@ -411,16 +422,22 @@ fn handle_special_command(
                     } else {
                         text.to_string()
                     };
-                    println!("[{}] {}: {}", i + 1, role.to_uppercase(), display_text);
+                    let role_colored = match role {
+                        "user" => role.to_uppercase().truecolor(120, 180, 255),
+                        "assistant" => role.to_uppercase().truecolor(180, 140, 255),
+                        "system" => role.to_uppercase().truecolor(120, 120, 130),
+                        _ => role.to_uppercase().normal(),
+                    };
+                    println!("  [{}] {} {}", i + 1, role_colored, display_text);
                 }
-                println!("{}", "-".repeat(50));
+                println!("  {}", "─".repeat(50).truecolor(60, 60, 70));
             }
             SpecialCommandResult::Continue
         }
         "clear" if conversation_context.is_some() => {
             let ctx = conversation_context.as_mut().unwrap();
             ctx.clear();
-            println!("🗑️  Conversation history cleared.");
+            ui::ok("Conversation history cleared");
             SpecialCommandResult::Continue
         }
         "" => SpecialCommandResult::Continue,
@@ -446,7 +463,7 @@ fn try_streaming_execution(
         if model.supports_token_streaming() {
             return execute_streaming(model, input, conversation_context, start, verbose);
         } else {
-            eprintln!("⚠️  Streaming only supported for GGUF models, falling back to batch mode");
+            ui::warning("Streaming only supported for GGUF models, falling back to batch mode");
             return false;
         }
     }
@@ -463,17 +480,15 @@ fn try_streaming_execution(
             if model.supports_token_streaming() {
                 execute_streaming(&model, input, conversation_context, start, verbose)
             } else {
-                eprintln!(
-                    "⚠️  Streaming only supported for GGUF models, falling back to batch mode"
-                );
+                ui::warning("Streaming only supported for GGUF models, falling back to batch mode");
                 false
             }
         }
         Err(e) => {
-            eprintln!(
-                "⚠️  Failed to load model: {}, falling back to batch mode",
+            ui::warning(&format!(
+                "Failed to load model: {}, falling back to batch mode",
                 e
-            );
+            ));
             false
         }
     }
@@ -541,10 +556,10 @@ fn execute_streaming(
                         .with_role(MessageRole::Assistant);
                     ctx.push(assistant_response);
                     if verbose > 1 {
-                        println!(
-                            "📝 Added assistant response to context (total: {} messages)",
+                        ui::hint(&format!(
+                            "Added assistant response to context (total: {} messages)",
                             ctx.history().len()
-                        );
+                        ));
                     }
                 }
             }
@@ -555,10 +570,8 @@ fn execute_streaming(
                 .ok()
                 .and_then(|ft| ft.map(|t| t.duration_since(start)));
 
-            // Compute decode speed from first-token onward (excludes prefill)
             let decode_tok_s = ttft.and_then(|ttft_dur| {
                 let decode_time = elapsed.saturating_sub(ttft_dur).as_secs_f64();
-                // Need at least 2 tokens and measurable decode time for meaningful tok/s
                 if tokens >= 2 && decode_time > 0.001 {
                     Some((tokens - 1) as f64 / decode_time)
                 } else {
@@ -568,20 +581,27 @@ fn execute_streaming(
 
             if let Some(tok_s) = decode_tok_s {
                 let ttft_ms = ttft.map(|d| d.as_millis()).unwrap_or(0);
-                println!(
-                    "\n⏱️  {} tokens in {:.2}s ({:.1} tok/s, {ttft_ms}ms to first token)",
+                println!();
+                ui::hint(&format!(
+                    "{} tokens in {:.2}s ({:.1} tok/s, {}ms to first token)",
                     tokens,
                     elapsed.as_secs_f64(),
-                    tok_s
-                );
+                    tok_s,
+                    ttft_ms
+                ));
             } else {
-                println!("\n⏱️  {} tokens in {:.2}s", tokens, elapsed.as_secs_f64());
+                println!();
+                ui::hint(&format!(
+                    "{} tokens in {:.2}s",
+                    tokens,
+                    elapsed.as_secs_f64()
+                ));
             }
             true
         }
         Err(e) => {
-            eprintln!("\n❌ Error: {}", e);
-            true // Still handled, even on error
+            ui::err(&format!("{}", e));
+            true
         }
     }
 }
@@ -604,7 +624,7 @@ fn execute_batch(
             for result in &results {
                 match &result.output.kind {
                     EnvelopeKind::Text(text) => {
-                        println!("{}", text);
+                        println!("  {}", text);
 
                         if let Some(ref mut ctx) = conversation_context {
                             let assistant_response =
@@ -612,27 +632,28 @@ fn execute_batch(
                                     .with_role(MessageRole::Assistant);
                             ctx.push(assistant_response);
                             if verbose > 1 {
-                                println!(
-                                    "📝 Added assistant response to context (total: {} messages)",
+                                ui::hint(&format!(
+                                    "Added assistant response to context (total: {} messages)",
                                     ctx.history().len()
-                                );
+                                ));
                             }
                         }
                     }
                     EnvelopeKind::Audio(data) => {
-                        println!("🔊 Audio output: {} bytes", data.len());
-                        println!("   Use the 'run' command with --output to save audio.");
+                        ui::ok(&format!("Audio output: {} bytes", data.len()));
+                        ui::hint("Use the 'run' command with --output to save audio");
                     }
                     EnvelopeKind::Embedding(vec) => {
-                        println!("📊 Embedding: {} dimensions", vec.len());
+                        ui::ok(&format!("Embedding: {} dimensions", vec.len()));
                     }
                 }
             }
 
-            println!("\n⏱️  Inference time: {:.2}s", elapsed.as_secs_f32());
+            println!();
+            ui::hint(&format!("Inference time: {:.2}s", elapsed.as_secs_f32()));
         }
         Err(e) => {
-            eprintln!("❌ Error: {}", e);
+            ui::err(&format!("{}", e));
         }
     }
 }

@@ -3,7 +3,6 @@
 #![allow(clippy::too_many_arguments)]
 
 use anyhow::{Context, Result};
-use colored::*;
 use std::fs;
 use std::path::{Path, PathBuf};
 use xybrid_core::context::StageDescriptor;
@@ -19,6 +18,7 @@ use xybrid_core::template_executor::TemplateExecutor;
 use xybrid_sdk::registry_client::RegistryClient;
 
 use super::utils::{display_stage_name, format_size, save_wav_file};
+use crate::ui;
 
 /// Run a pipeline from a configuration file.
 pub(crate) fn run_pipeline(
@@ -45,10 +45,8 @@ pub(crate) fn run_pipeline(
     let config = PipelineConfig::from_yaml(&config_content)
         .with_context(|| format!("Failed to parse YAML config: {}", config_path.display()))?;
 
-    println!("🚀 Xybrid Pipeline Runner");
-    if let Some(name) = &config.name {
-        println!("📋 Pipeline: {}\n", name);
-    }
+    let pipeline_name = config.name.as_deref().unwrap_or("unnamed");
+    ui::header(&format!("Pipeline · {}", pipeline_name));
 
     let client = RegistryClient::from_env().context("Failed to initialize registry client")?;
     let stages = resolve_pipeline_stages(&config, &client)?;
@@ -157,33 +155,21 @@ fn download_model(
     model_id: &str,
     client: &RegistryClient,
 ) -> Result<()> {
-    use indicatif::{ProgressBar, ProgressStyle};
-
-    println!("📥 Downloading model: {}", model_id);
-
     match client.resolve(model_id, None) {
         Ok(resolved) => {
-            let pb = ProgressBar::new(resolved.size_bytes);
-            pb.set_style(
-                ProgressStyle::default_bar()
-                    .template(
-                        "{spinner:.green} {msg} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})",
-                    )
-                    .unwrap()
-                    .progress_chars("█▓▒░  "),
-            );
-            pb.set_message(model_id.to_string());
+            let pb = ui::download_bar(resolved.size_bytes, model_id);
 
             match client.fetch(model_id, None, |progress| {
                 let bytes_done = (progress * resolved.size_bytes as f32) as u64;
                 pb.set_position(bytes_done);
             }) {
                 Ok(bundle_path) => {
-                    pb.finish_with_message(format!("{} ✓", model_id));
+                    pb.finish_and_clear();
+                    ui::ok(&format!("{} downloaded", model_id));
                     desc.bundle_path = Some(bundle_path.to_string_lossy().to_string());
                 }
                 Err(e) => {
-                    pb.abandon_with_message(format!("{} ✗", model_id));
+                    pb.abandon();
                     return Err(anyhow::anyhow!(
                         "Failed to download model '{}': {}",
                         model_id,
@@ -210,20 +196,20 @@ fn build_input_envelope(
     voice: Option<&str>,
 ) -> Result<Envelope> {
     let mut input = if let Some(audio_path) = input_audio {
-        println!("📂 Loading audio file: {}", audio_path.display());
+        ui::kv("Input", &format!("audio ({})", audio_path.display()));
         let audio_bytes = fs::read(audio_path)
             .with_context(|| format!("Failed to read audio file: {}", audio_path.display()))?;
-        println!("   Loaded {} bytes", audio_bytes.len());
+        ui::kv("Size", &format!("{} bytes", audio_bytes.len()));
         Envelope::new(EnvelopeKind::Audio(audio_bytes))
     } else if let Some(text) = input_text {
-        println!("📝 Input text: \"{}\"", text);
+        ui::kv("Input", &format!("\"{}\"", text));
         Envelope::new(EnvelopeKind::Text(text.to_string()))
     } else {
         Envelope::new(EnvelopeKind::Text(String::new()))
     };
 
     if let Some(voice_id) = voice {
-        println!("🎙️  Voice: {}", voice_id);
+        ui::kv("Voice", voice_id);
         input
             .metadata
             .insert("voice_id".to_string(), voice_id.to_string());
@@ -249,20 +235,28 @@ fn print_pipeline_config(
     metrics: &xybrid_core::context::DeviceMetrics,
     target: Option<&str>,
 ) {
-    println!("📊 Configuration:");
-    println!("   Stages: {}", stages.len());
+    ui::section("Configuration");
+    println!();
+    ui::kv("Stages", &stages.len().to_string());
     for (i, stage) in stages.iter().enumerate() {
-        println!("      {}. {}", i + 1, display_stage_name(&stage.name));
+        println!(
+            "  {}  {}. {}",
+            ui::dim(""),
+            i + 1,
+            ui::accent(display_stage_name(&stage.name))
+        );
     }
     println!();
+    ui::kv("Input", input.kind_str());
 
-    println!("📦 Input: {}", input.kind_str());
-
-    println!("📊 Device Metrics (live):");
-    println!("   Network RTT: {}ms", metrics.network_rtt);
-    println!("   Battery: {}%", metrics.battery);
-    println!("   Temperature: {:.1}°C", metrics.temperature);
+    ui::section("Device");
     println!();
+    ui::kv("RTT", &format!("{}ms", metrics.network_rtt));
+    ui::kv("Battery", &format!("{}%", metrics.battery));
+    ui::kv(
+        "Temperature",
+        &format!("{:.1}\u{00B0}C", metrics.temperature),
+    );
 
     let platform = Platform::detect();
     let resolved_target = TargetResolver::new()
@@ -270,10 +264,11 @@ fn print_pipeline_config(
         .with_platform(platform)
         .resolve();
 
-    println!("🎯 Target Resolution:");
-    println!("   Platform: {}", platform);
-    println!("   Requested: {}", target.unwrap_or("(auto)"));
-    println!("   Resolved: {}", resolved_target);
+    ui::section("Target");
+    println!();
+    ui::kv("Platform", &platform.to_string());
+    ui::kv("Requested", target.unwrap_or("(auto)"));
+    ui::kv("Resolved", &resolved_target.to_string());
     println!();
 }
 
@@ -283,8 +278,7 @@ fn run_dry_run(
     metrics: &xybrid_core::context::DeviceMetrics,
     availability_fn: &dyn Fn(&str) -> LocalAvailability,
 ) -> Result<()> {
-    println!("🔎 Dry Run: Routing Simulation");
-    println!("{}", "=".repeat(60));
+    ui::section("Dry Run · Routing Simulation");
     println!();
 
     let mut routing_engine = xybrid_core::orchestrator::routing_engine::DefaultRoutingEngine::new();
@@ -294,27 +288,29 @@ fn run_dry_run(
     let mut current_input = input.clone();
 
     for (i, stage) in stages.iter().enumerate() {
-        println!("Stage {}: {}", i + 1, display_stage_name(&stage.name));
+        println!(
+            "  {} {}",
+            ui::dim(&format!("Stage {}", i + 1)),
+            ui::accent(display_stage_name(&stage.name))
+        );
 
         let policy_result = policy_engine.evaluate(&stage.name, &current_input, metrics);
-        println!(
-            "   Policy: {}",
-            if policy_result.allowed {
-                "✓ ALLOWED"
-            } else {
-                "✗ DENIED"
-            }
-        );
+        let policy_status = if policy_result.allowed {
+            format!("{}", ui::success("ALLOWED"))
+        } else {
+            format!("{}", ui::error("DENIED"))
+        };
+        ui::kv("  Policy", &policy_status);
         if let Some(ref reason) = policy_result.reason {
-            println!("           {}", reason);
+            ui::kv("  Reason", reason);
         }
 
         let availability = availability_fn(&stage.name);
         let routing_decision =
             routing_engine.decide(&stage.name, metrics, &policy_result, &availability);
-        println!(
-            "   Routing: {} ({})",
-            routing_decision.target, routing_decision.reason
+        ui::kv(
+            "  Routing",
+            &format!("{} ({})", routing_decision.target, routing_decision.reason),
         );
 
         let new_kind = match &current_input.kind {
@@ -323,12 +319,12 @@ fn run_dry_run(
             EnvelopeKind::Embedding(_) => EnvelopeKind::Text("result".to_string()),
         };
         current_input = Envelope::new(new_kind);
-        println!("   Output:  {}", current_input.kind_str());
+        ui::kv("  Output", current_input.kind_str());
         println!();
     }
 
-    println!("{}", "=".repeat(60));
-    println!("✅ Dry run completed - no execution performed");
+    ui::ok("Dry run completed — no execution performed");
+    println!();
     Ok(())
 }
 
@@ -346,7 +342,7 @@ fn execute_pipeline(
     xybrid_sdk::bridge_orchestrator_events(&orchestrator);
 
     if let Some(policy_file) = policy_path {
-        println!("📜 Loading policy bundle: {}", policy_file.display());
+        ui::kv("Policy", &policy_file.display().to_string());
         let policy_bytes = fs::read(policy_file)
             .with_context(|| format!("Failed to read policy file: {}", policy_file.display()))?;
 
@@ -354,22 +350,22 @@ fn execute_pipeline(
             .load_policies(policy_bytes)
             .map_err(|e| anyhow::anyhow!("Failed to load policies: {}", e))?;
 
-        println!("   ✓ Policy bundle loaded successfully");
+        ui::ok("Policy bundle loaded");
         println!();
     }
 
-    println!("⚙️  Executing pipeline...");
-    println!("{}", "=".repeat(60));
-    println!();
+    let sp = ui::spinner("Executing pipeline...");
 
     match orchestrator.execute_pipeline(stages, input, metrics, availability_fn) {
         Ok(results) => {
+            sp.finish_and_clear();
             print_pipeline_results(&results, output_path)?;
             print_trace_output(trace_enabled, trace_export)?;
             Ok(())
         }
         Err(e) => {
-            eprintln!("❌ Pipeline execution failed: {}", e);
+            sp.finish_and_clear();
+            ui::err(&format!("Pipeline execution failed: {}", e));
             Err(anyhow::anyhow!("Pipeline execution failed: {}", e))
         }
     }
@@ -379,43 +375,46 @@ fn print_pipeline_results(
     results: &[xybrid_core::orchestrator::StageExecutionResult],
     output_path: Option<&PathBuf>,
 ) -> Result<()> {
+    ui::section("Results");
     println!();
-    println!("📊 Pipeline Results:");
-    println!("{}", "=".repeat(60));
 
     for (i, result) in results.iter().enumerate() {
-        println!("\nStage {}: {}", i + 1, display_stage_name(&result.stage));
-        println!("  Routing: {}", result.routing_decision.target);
-        println!("  Reason: {}", result.routing_decision.reason);
-        println!("  Time: {}ms", result.latency_ms);
-        println!("  Output Type: {}", result.output.kind_str());
+        println!(
+            "  {} {}",
+            ui::dim(&format!("Stage {}", i + 1)),
+            ui::accent(display_stage_name(&result.stage))
+        );
+        ui::kv("  Routing", &result.routing_decision.target.to_string());
+        ui::kv("  Reason", &result.routing_decision.reason);
+        ui::kv("  Time", &format!("{}ms", result.latency_ms));
+        ui::kv("  Output", result.output.kind_str());
 
         match &result.output.kind {
             EnvelopeKind::Text(text) => {
                 if !text.is_empty() {
-                    println!("  Output Content:");
-                    println!("    \"{}\"", text);
+                    println!();
+                    println!("    {}", text);
                 }
             }
             EnvelopeKind::Audio(data) => {
-                println!("  Output Size: {} bytes", data.len());
+                ui::kv("  Size", &format!("{} bytes", data.len()));
             }
             EnvelopeKind::Embedding(vec) => {
-                println!("  Output Dimensions: {} elements", vec.len());
+                ui::kv("  Dimensions", &format!("{} elements", vec.len()));
                 if vec.len() <= 10 {
-                    println!("  Values: {:?}", vec);
+                    println!("    {:?}", vec);
                 } else {
-                    println!("  First 5: {:?}", &vec[..5]);
+                    println!("    {:?} ...", &vec[..5]);
                 }
             }
         }
+        println!();
     }
 
     save_pipeline_output(results, output_path)?;
 
+    ui::ok("Pipeline completed successfully");
     println!();
-    println!("{}", "=".repeat(60));
-    println!("✨ Pipeline completed successfully!");
 
     Ok(())
 }
@@ -430,14 +429,12 @@ fn save_pipeline_output(
                 EnvelopeKind::Text(text) => {
                     fs::write(path, text)
                         .with_context(|| format!("Failed to write output to {}", path.display()))?;
-                    println!();
-                    println!("💾 Output saved to: {}", path.display());
+                    ui::ok(&format!("Output saved to {}", path.display()));
                 }
                 EnvelopeKind::Audio(data) => {
                     save_wav_file(path, data, 24000, 1)
                         .with_context(|| format!("Failed to write audio to {}", path.display()))?;
-                    println!();
-                    println!("💾 Audio saved to: {}", path.display());
+                    ui::ok(&format!("Audio saved to {}", path.display()));
                 }
                 EnvelopeKind::Embedding(vec) => {
                     let json = serde_json::to_string_pretty(vec)
@@ -445,15 +442,13 @@ fn save_pipeline_output(
                     fs::write(path, json).with_context(|| {
                         format!("Failed to write embedding to {}", path.display())
                     })?;
-                    println!();
-                    println!("💾 Embedding saved to: {}", path.display());
+                    ui::ok(&format!("Embedding saved to {}", path.display()));
                 }
             }
         }
     } else if let Some(last_result) = results.last() {
         if matches!(last_result.output.kind, EnvelopeKind::Audio(_)) {
-            println!();
-            println!("💡 Tip: Use --output <file.wav> to save the audio");
+            ui::hint("Use --output <file.wav> to save the audio");
         }
     }
 
@@ -471,7 +466,7 @@ fn print_trace_output(trace_enabled: bool, trace_export: Option<&PathBuf>) -> Re
                 .to_chrome_trace_json();
             fs::write(export_path, json)
                 .with_context(|| format!("Failed to export trace to {}", export_path.display()))?;
-            println!("💾 Trace exported to: {}", export_path.display());
+            ui::ok(&format!("Trace exported to {}", export_path.display()));
         }
     }
 
@@ -501,8 +496,8 @@ pub(crate) fn run_bundle(
     let trace_id = uuid::Uuid::new_v4();
     xybrid_sdk::set_telemetry_pipeline_context(None, Some(trace_id));
 
-    println!("🚀 Xybrid Bundle Runner");
-    println!("📦 Bundle: {}\n", bundle_path.display());
+    ui::header("Run · Bundle");
+    ui::kv("Bundle", &bundle_path.display().to_string());
 
     if !bundle_path.exists() {
         return Err(anyhow::anyhow!(
@@ -511,11 +506,12 @@ pub(crate) fn run_bundle(
         ));
     }
 
-    println!("📂 Loading and extracting bundle...");
+    let sp = ui::spinner("Loading and extracting bundle...");
     let cache = xybrid_sdk::cache::CacheManager::new().context("Failed to create cache manager")?;
     let extract_dir = cache
         .ensure_extracted(bundle_path)
         .context("Failed to extract bundle")?;
+    sp.finish_and_clear();
 
     let (metadata, input) =
         prepare_bundle_execution(&extract_dir, input_audio, input_text, voice, dry_run)?;
@@ -523,11 +519,11 @@ pub(crate) fn run_bundle(
     emit_pipeline_start_event(&metadata, &bundle_path.display().to_string());
 
     if dry_run {
-        println!("🔎 Dry Run: Bundle inspection only");
-        println!("{}", "=".repeat(60));
+        ui::section("Dry Run");
         println!();
-        println!("Bundle is valid and ready for execution.");
-        println!("Use without --dry-run to run inference.");
+        ui::ok("Bundle is valid and ready for execution");
+        ui::hint("Use without --dry-run to run inference");
+        println!();
         return Ok(());
     }
 
@@ -572,8 +568,7 @@ pub(crate) fn run_model(
     let trace_id = uuid::Uuid::new_v4();
     xybrid_sdk::set_telemetry_pipeline_context(None, Some(trace_id));
 
-    println!("🚀 Xybrid Model Runner");
-    println!("🔖 Model: {}\n", model_id.cyan().bold());
+    ui::header(&format!("Run · {}", model_id));
 
     let client = RegistryClient::from_env().context("Failed to initialize registry client")?;
 
@@ -588,27 +583,27 @@ pub(crate) fn run_model(
         model_id
     ))?;
 
-    println!("📦 Resolved variant:");
-    println!("   Repository: {}", resolved.hf_repo);
-    println!("   File: {}", resolved.file);
-    println!(
-        "   Size: {}",
-        format_size(resolved.size_bytes).bright_cyan()
-    );
-    println!("   Format: {} ({})", resolved.format, resolved.quantization);
     println!();
+    ui::kv("Repository", &resolved.hf_repo);
+    ui::kv("File", &resolved.file);
+    ui::kv("Size", &format_size(resolved.size_bytes));
+    ui::kv(
+        "Format",
+        &format!("{} ({})", resolved.format, resolved.quantization),
+    );
 
     let bundle_path = fetch_or_cache(&client, model_id, platform, &resolved)?;
-    println!("   Location: {}", bundle_path.display());
+    ui::kv("Location", &bundle_path.display().to_string());
     println!();
 
     drop(_fetch_span);
 
-    println!("📂 Loading and extracting bundle...");
+    let sp = ui::spinner("Loading and extracting bundle...");
     let cache = xybrid_sdk::cache::CacheManager::new().context("Failed to create cache manager")?;
     let extract_dir = cache
         .ensure_extracted(&bundle_path)
         .context("Failed to extract bundle")?;
+    sp.finish_and_clear();
 
     let (metadata, input) =
         prepare_bundle_execution(&extract_dir, input_audio, input_text, voice, dry_run)?;
@@ -616,11 +611,11 @@ pub(crate) fn run_model(
     emit_pipeline_start_event(&metadata, "registry");
 
     if dry_run {
-        println!("🔎 Dry Run: Model inspection only");
-        println!("{}", "=".repeat(60));
+        ui::section("Dry Run");
         println!();
-        println!("Model is valid and ready for execution.");
-        println!("Use without --dry-run to run inference.");
+        ui::ok("Model is valid and ready for execution");
+        ui::hint("Use without --dry-run to run inference");
+        println!();
         return Ok(());
     }
 
@@ -656,11 +651,8 @@ pub(crate) fn run_directory(
         crate::tracing_viz::reset_collector();
     }
 
-    println!("🚀 Xybrid Model Runner (local directory)");
-    println!(
-        "📂 Directory: {}\n",
-        dir.display().to_string().cyan().bold()
-    );
+    ui::header("Run · Local Directory");
+    ui::kv("Directory", &dir.display().to_string());
 
     if !dir.exists() {
         return Err(anyhow::anyhow!("Directory not found: {}", dir.display()));
@@ -671,10 +663,11 @@ pub(crate) fn run_directory(
     emit_pipeline_start_event(&metadata, "directory");
 
     if dry_run {
-        println!("🔎 Dry Run: Model inspection only");
-        println!("{}", "=".repeat(60));
-        println!("\nModel is valid and ready for execution.");
-        println!("Use without --dry-run to run inference.");
+        ui::section("Dry Run");
+        println!();
+        ui::ok("Model is valid and ready for execution");
+        ui::hint("Use without --dry-run to run inference");
+        println!();
         return Ok(());
     }
 
@@ -709,20 +702,19 @@ pub(crate) fn run_huggingface(
         crate::tracing_viz::reset_collector();
     }
 
-    println!("🚀 Xybrid Model Runner (HuggingFace)");
-    println!("🤗 Repo: {}\n", repo.cyan().bold());
+    ui::header(&format!("Run · HuggingFace · {}", repo));
 
-    println!("📥 Loading from HuggingFace (downloading if needed)...");
+    let sp = ui::spinner("Loading from HuggingFace...");
     let loader = xybrid_sdk::ModelLoader::from_huggingface_parsed(repo);
     let model = loader.load().context(format!(
         "Failed to load model from HuggingFace repo '{}'",
         repo
     ))?;
+    sp.finish_and_clear();
 
-    println!("✅ Model loaded: {}", model.model_id().cyan());
+    ui::ok(&format!("Model loaded: {}", model.model_id()));
     println!();
 
-    // Resolve the cache directory for direct execution
     let sanitized = repo.replace('/', "--");
     let cache_dir = dirs::home_dir()
         .ok_or_else(|| anyhow::anyhow!("Cannot determine home directory"))?
@@ -737,10 +729,11 @@ pub(crate) fn run_huggingface(
     emit_pipeline_start_event(&metadata, "huggingface");
 
     if dry_run {
-        println!("🔎 Dry Run: Model inspection only");
-        println!("{}", "=".repeat(60));
-        println!("\nModel is valid and ready for execution.");
-        println!("Use without --dry-run to run inference.");
+        ui::section("Dry Run");
+        println!();
+        ui::ok("Model is valid and ready for execution");
+        ui::hint("Use without --dry-run to run inference");
+        println!();
         return Ok(());
     }
 
@@ -779,64 +772,58 @@ pub(crate) fn run_model_file(
         .canonicalize()
         .with_context(|| format!("GGUF file not found: {}", gguf_path.display()))?;
 
-    println!("🚀 Xybrid Model Runner (GGUF file)");
-    println!(
-        "📦 File: {}\n",
-        gguf_path.display().to_string().cyan().bold()
-    );
+    ui::header("Run · GGUF File");
+    ui::kv("File", &gguf_path.display().to_string());
 
     let metadata = xybrid_sdk::metadata_gen::generate_metadata_for_gguf_file(&gguf_path)
         .map_err(|e| anyhow::anyhow!("Failed to generate metadata for GGUF file: {}", e))?;
 
-    println!("📋 Auto-generated metadata:");
-    println!("   Model ID: {}", metadata.model_id);
+    println!();
+    ui::kv("Model ID", &metadata.model_id);
     if let xybrid_core::execution::ExecutionTemplate::Gguf { context_length, .. } =
         &metadata.execution_template
     {
-        println!("   Context length: {}", context_length);
+        ui::kv("Context", &context_length.to_string());
     }
     if let Some(arch) = metadata.metadata.get("architecture") {
-        println!("   Architecture: {}", arch);
+        ui::kv("Architecture", &arch.to_string());
     }
-    println!();
 
     let parent_dir = gguf_path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("Cannot determine parent directory of GGUF file"))?;
 
-    // Write metadata to parent dir so TemplateExecutor can find it
     let metadata_path = parent_dir.join("model_metadata.json");
     if !metadata_path.exists() {
         let json = serde_json::to_string_pretty(&metadata)?;
         fs::write(&metadata_path, &json)?;
-        println!(
-            "{}",
-            "⚠️  Generated model_metadata.json (review and adjust if needed)".yellow()
-        );
-        println!("   {}", metadata_path.display());
         println!();
+        ui::warning("model_metadata.json was auto-generated. Review and adjust if needed.");
+        ui::hint(&metadata_path.display().to_string());
     }
+    println!();
 
     emit_pipeline_start_event(&metadata, "model-file");
 
     if dry_run {
-        println!("🔎 Dry Run: Model inspection only");
-        println!("{}", "=".repeat(60));
-        println!("\nModel is valid and ready for execution.");
-        println!("Use without --dry-run to run inference.");
+        ui::section("Dry Run");
+        println!();
+        ui::ok("Model is valid and ready for execution");
+        ui::hint("Use without --dry-run to run inference");
+        println!();
         return Ok(());
     }
 
     let input = if let Some(audio_path) = input_audio {
-        println!("🎤 Loading audio file: {}", audio_path.display());
+        ui::kv("Input", &format!("audio ({})", audio_path.display()));
         let audio_bytes = fs::read(audio_path)
             .with_context(|| format!("Failed to read audio file: {}", audio_path.display()))?;
         Envelope::new(EnvelopeKind::Audio(audio_bytes))
     } else if let Some(text) = input_text {
-        println!("📝 Input text: \"{}\"", text);
+        ui::kv("Input", &format!("\"{}\"", text));
         let mut envelope = Envelope::new(EnvelopeKind::Text(text.to_string()));
         if let Some(voice_id) = voice {
-            println!("🎙️  Voice: {}", voice_id);
+            ui::kv("Voice", voice_id);
             envelope
                 .metadata
                 .insert("voice_id".to_string(), voice_id.to_string());
@@ -870,20 +857,10 @@ fn fetch_or_cache(
         .is_cached(model_id, platform)
         .context("Failed to check cache status")?
     {
-        println!("✅ Model is cached");
+        ui::ok("Model cached");
         Ok(client.get_cache_path(resolved))
     } else {
-        println!("📥 Downloading model...");
-
-        use indicatif::{ProgressBar, ProgressStyle};
-        let pb = ProgressBar::new(resolved.size_bytes);
-        pb.set_style(
-            ProgressStyle::default_bar()
-                .template("{spinner:.green} Downloading {msg} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}, {eta})")
-                .unwrap()
-                .progress_chars("█▓▒░  ")
-        );
-        pb.set_message(model_id.to_string());
+        let pb = ui::download_bar(resolved.size_bytes, model_id);
 
         let path = client
             .fetch(model_id, platform, |progress| {
@@ -895,7 +872,8 @@ fn fetch_or_cache(
                 model_id
             ))?;
 
-        pb.finish_with_message(format!("✅ Downloaded {}", model_id));
+        pb.finish_and_clear();
+        ui::ok(&format!("Downloaded {}", model_id));
         Ok(path)
     }
 }
@@ -913,14 +891,21 @@ fn prepare_bundle_execution(
     let metadata: ModelMetadata =
         serde_json::from_str(&metadata_content).context("Failed to parse model_metadata.json")?;
 
-    println!("📋 Model Metadata:");
-    println!("   ID: {}", metadata.model_id);
-    println!("   Version: {}", metadata.version);
+    ui::section("Model");
+    println!();
+    ui::kv("ID", &metadata.model_id);
+    ui::kv("Version", &metadata.version);
     if let Some(desc) = &metadata.description {
-        println!("   Description: {}", desc);
+        ui::kv("Description", desc);
     }
-    println!("   Preprocessing: {} steps", metadata.preprocessing.len());
-    println!("   Postprocessing: {} steps", metadata.postprocessing.len());
+    ui::kv(
+        "Preprocessing",
+        &format!("{} steps", metadata.preprocessing.len()),
+    );
+    ui::kv(
+        "Postprocessing",
+        &format!("{} steps", metadata.postprocessing.len()),
+    );
     println!();
 
     if dry_run {
@@ -928,20 +913,20 @@ fn prepare_bundle_execution(
     }
 
     let mut input = if let Some(audio_path) = input_audio {
-        println!("🎤 Loading audio file: {}", audio_path.display());
+        ui::kv("Input", &format!("audio ({})", audio_path.display()));
         let audio_bytes = fs::read(audio_path)
             .with_context(|| format!("Failed to read audio file: {}", audio_path.display()))?;
-        println!("   Loaded {} bytes", audio_bytes.len());
+        ui::kv("Size", &format!("{} bytes", audio_bytes.len()));
         Envelope::new(EnvelopeKind::Audio(audio_bytes))
     } else if let Some(text) = input_text {
-        println!("📝 Input text: \"{}\"", text);
+        ui::kv("Input", &format!("\"{}\"", text));
         Envelope::new(EnvelopeKind::Text(text.to_string()))
     } else {
         return Ok((metadata, None));
     };
 
     if let Some(voice_id) = voice {
-        println!("🎙️  Voice: {}", voice_id);
+        ui::kv("Voice", voice_id);
         input
             .metadata
             .insert("voice_id".to_string(), voice_id.to_string());
@@ -957,8 +942,7 @@ fn run_inference(
     input: &Envelope,
     trace_enabled: bool,
 ) -> Result<(Envelope, std::time::Duration)> {
-    println!("⚙️  Running inference...");
-    println!("{}", "=".repeat(60));
+    let sp = ui::spinner("Running inference...");
 
     let base_path = extract_dir
         .to_str()
@@ -981,6 +965,8 @@ fn run_inference(
         .map_err(|e| anyhow::anyhow!("Inference failed: {:?}", e))?;
     let elapsed = start_time.elapsed();
 
+    sp.finish_and_clear();
+
     Ok((output, elapsed))
 }
 
@@ -990,46 +976,47 @@ fn print_inference_results(
     elapsed: std::time::Duration,
     output_path: Option<&PathBuf>,
 ) -> Result<()> {
+    ui::section("Results");
     println!();
-    println!("📊 Results:");
-    println!("{}", "=".repeat(60));
-    println!();
-    println!("  Model: {} v{}", metadata.model_id, metadata.version);
-    println!("  Time: {:.2}s", elapsed.as_secs_f32());
-    println!("  Output Type: {}", output.kind_str());
+
+    ui::kv(
+        "Model",
+        &format!("{} v{}", metadata.model_id, metadata.version),
+    );
+    ui::kv("Time", &format!("{:.2}s", elapsed.as_secs_f32()));
+    ui::kv("Output", output.kind_str());
 
     match &output.kind {
         EnvelopeKind::Text(text) => {
             if !text.is_empty() {
                 println!();
-                println!("  Output:");
-                println!("    \"{}\"", text);
+                println!("    {}", text);
             }
             if let Some(path) = output_path {
                 fs::write(path, text)
                     .with_context(|| format!("Failed to write output to {}", path.display()))?;
                 println!();
-                println!("💾 Output saved to: {}", path.display());
+                ui::ok(&format!("Output saved to {}", path.display()));
             }
         }
         EnvelopeKind::Audio(data) => {
-            println!("  Output Size: {} bytes", data.len());
+            ui::kv("Size", &format!("{} bytes", data.len()));
             if let Some(path) = output_path {
                 save_wav_file(path, data, 24000, 1)
                     .with_context(|| format!("Failed to write audio to {}", path.display()))?;
                 println!();
-                println!("💾 Audio saved to: {}", path.display());
+                ui::ok(&format!("Audio saved to {}", path.display()));
             } else {
                 println!();
-                println!("💡 Tip: Use --output <file.wav> to save the audio");
+                ui::hint("Use --output <file.wav> to save the audio");
             }
         }
         EnvelopeKind::Embedding(vec) => {
-            println!("  Output Dimensions: {} elements", vec.len());
+            ui::kv("Dimensions", &format!("{} elements", vec.len()));
             if vec.len() <= 10 {
-                println!("  Values: {:?}", vec);
+                println!("    {:?}", vec);
             } else {
-                println!("  First 5: {:?}", &vec[..5]);
+                println!("    {:?} ...", &vec[..5]);
             }
             if let Some(path) = output_path {
                 let json =
@@ -1037,14 +1024,14 @@ fn print_inference_results(
                 fs::write(path, json)
                     .with_context(|| format!("Failed to write embedding to {}", path.display()))?;
                 println!();
-                println!("💾 Embedding saved to: {}", path.display());
+                ui::ok(&format!("Embedding saved to {}", path.display()));
             }
         }
     }
 
     println!();
-    println!("{}", "=".repeat(60));
-    println!("✨ Inference completed successfully!");
+    ui::ok("Inference completed successfully");
+    println!();
 
     Ok(())
 }

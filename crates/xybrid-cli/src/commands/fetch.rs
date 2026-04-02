@@ -1,23 +1,21 @@
 //! `xybrid fetch` command handler.
 
 use anyhow::{Context, Result};
-use colored::*;
-use indicatif::{ProgressBar, ProgressStyle};
 use std::fs;
 use std::path::Path;
 
 use super::utils::format_size;
+use crate::ui;
 
 /// Handle `xybrid fetch --model <id>` command.
 pub(crate) fn handle_fetch_command(model_id: &str, platform: Option<&str>) -> Result<()> {
-    println!("📥 Fetching model: {}", model_id.cyan().bold());
+    ui::header(&format!("Fetch · {}", model_id));
+
     if let Some(p) = platform {
-        println!("   Platform: {}", p);
+        ui::kv("Platform", p);
     } else {
-        println!("   Platform: auto-detect");
+        ui::kv("Platform", "auto-detect");
     }
-    println!("{}", "=".repeat(60));
-    println!();
 
     let client = xybrid_sdk::registry_client::RegistryClient::from_env()
         .context("Failed to initialize registry client")?;
@@ -32,13 +30,13 @@ pub(crate) fn handle_fetch_command(model_id: &str, platform: Option<&str>) -> Re
         .is_cached(model_id, platform)
         .context("Failed to check cache status")?
     {
-        println!("✅ Model is already cached and verified");
+        ui::ok("Model is already cached and verified");
         let cache_path = client.get_cache_path(&resolved);
-        println!("   Location: {}", cache_path.display());
+        ui::kv("Location", &cache_path.display().to_string());
         return Ok(());
     }
 
-    let pb = create_download_progress_bar(resolved.size_bytes, model_id);
+    let pb = ui::download_bar(resolved.size_bytes, model_id);
 
     let bundle_path = client
         .fetch(model_id, platform, |progress| {
@@ -47,25 +45,19 @@ pub(crate) fn handle_fetch_command(model_id: &str, platform: Option<&str>) -> Re
         })
         .context(format!("Failed to fetch model '{}'", model_id))?;
 
-    pb.finish_with_message(format!("✅ Downloaded {}", model_id));
+    pb.finish_and_clear();
     println!();
-    println!("✅ Model downloaded successfully!");
-    println!("   Location: {}", bundle_path.display());
+    ui::ok("Model downloaded successfully");
+    ui::kv("Location", &bundle_path.display().to_string());
     println!();
-    println!("{}", "=".repeat(60));
 
     Ok(())
 }
 
 /// Handle `xybrid fetch --huggingface <repo>` command.
-///
-/// Downloads a model directly from HuggingFace Hub and auto-generates metadata.
 pub(crate) fn handle_fetch_huggingface_command(repo: &str) -> Result<()> {
-    println!("📥 Fetching from HuggingFace: {}", repo.cyan().bold());
-    println!("{}", "=".repeat(60));
-    println!();
+    ui::header(&format!("Fetch · HuggingFace · {}", repo));
 
-    // Compute cache dir to check for auto-generated metadata after load
     let sanitized = repo.replace('/', "--");
     let cache_dir =
         dirs::home_dir().map(|h| h.join(".xybrid").join("cache").join("hf").join(&sanitized));
@@ -76,12 +68,12 @@ pub(crate) fn handle_fetch_huggingface_command(repo: &str) -> Result<()> {
         repo
     ))?;
 
-    println!("✅ Model downloaded successfully!");
-    println!("   Model ID: {}", model.model_id().cyan());
-    println!("   Version: {}", model.version());
+    ui::ok("Model downloaded successfully");
+    ui::kv("Model ID", model.model_id());
+    ui::kv("Version", model.version());
 
     if let Some(ref dir) = cache_dir {
-        println!("   Directory: {}", dir.display());
+        ui::kv("Directory", &dir.display().to_string());
 
         let metadata_path = dir.join("model_metadata.json");
         if metadata_path.exists() {
@@ -89,12 +81,10 @@ pub(crate) fn handle_fetch_huggingface_command(repo: &str) -> Result<()> {
                 if let Ok(metadata) = serde_json::from_str::<serde_json::Value>(&content) {
                     if metadata.get("auto_generated").and_then(|v| v.as_bool()) == Some(true) {
                         println!();
-                        println!(
-                            "{}",
-                            "⚠️  model_metadata.json was auto-generated. Review and adjust if needed:"
-                                .yellow()
+                        ui::warning(
+                            "model_metadata.json was auto-generated. Review and adjust if needed:",
                         );
-                        println!("   {}", metadata_path.display());
+                        ui::hint(&metadata_path.display().to_string());
                     }
                 }
             }
@@ -102,20 +92,15 @@ pub(crate) fn handle_fetch_huggingface_command(repo: &str) -> Result<()> {
     }
 
     println!();
-    println!("{}", "=".repeat(60));
 
     Ok(())
 }
 
 /// Handle `xybrid fetch <pipeline.yaml>` command.
-///
-/// Pre-downloads all models required by the pipeline.
 pub(crate) fn handle_fetch_pipeline_command(
     config_path: &Path,
     platform: Option<&str>,
 ) -> Result<()> {
-    println!();
-
     if !config_path.exists() {
         return Err(anyhow::anyhow!(
             "Pipeline config not found: {}",
@@ -138,9 +123,7 @@ pub(crate) fn handle_fetch_pipeline_command(
             .and_then(|s| s.to_str())
             .unwrap_or("pipeline"),
     );
-    println!("Fetching models for: {}", pipeline_name.cyan().bold());
-    println!("{}", "━".repeat(60));
-    println!();
+    ui::header(&format!("Fetch Pipeline · {}", pipeline_name));
 
     let models_to_fetch: Vec<String> = config
         .stages
@@ -150,53 +133,43 @@ pub(crate) fn handle_fetch_pipeline_command(
         .collect();
 
     if models_to_fetch.is_empty() {
-        println!("ℹ️  No device models to fetch in this pipeline.");
+        ui::hint("No device models to fetch in this pipeline.");
         return Ok(());
     }
 
+    println!();
     let (success_count, skip_count, error_count) =
         fetch_models(&client, &models_to_fetch, platform)?;
 
     println!();
-    println!("{}", "━".repeat(60));
 
     if error_count == 0 {
-        println!(
-            "✅ All models ready ({} downloaded, {} cached)",
+        ui::ok(&format!(
+            "All models ready ({} downloaded, {} cached)",
             success_count, skip_count
-        );
+        ));
     } else {
-        println!(
-            "⚠️  Completed with errors: {} downloaded, {} cached, {} failed",
+        ui::warning(&format!(
+            "Completed with errors: {} downloaded, {} cached, {} failed",
             success_count, skip_count, error_count
-        );
+        ));
     }
+
+    println!();
 
     Ok(())
 }
 
 fn print_resolved_variant(resolved: &xybrid_sdk::registry_client::ResolvedVariant) {
-    println!("📦 Resolved variant:");
-    println!("   Repository: {}", resolved.hf_repo);
-    println!("   File: {}", resolved.file);
-    println!(
-        "   Size: {}",
-        format_size(resolved.size_bytes).bright_cyan()
-    );
-    println!("   Format: {} ({})", resolved.format, resolved.quantization);
     println!();
-}
-
-fn create_download_progress_bar(size_bytes: u64, model_id: &str) -> ProgressBar {
-    let pb = ProgressBar::new(size_bytes);
-    pb.set_style(
-        ProgressStyle::default_bar()
-            .template("{spinner:.green} Downloading {msg} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}, {eta})")
-            .unwrap()
-            .progress_chars("█▓▒░  ")
+    ui::kv("Repository", &resolved.hf_repo);
+    ui::kv("File", &resolved.file);
+    ui::kv("Size", &format_size(resolved.size_bytes));
+    ui::kv(
+        "Format",
+        &format!("{} ({})", resolved.format, resolved.quantization),
     );
-    pb.set_message(model_id.to_string());
-    pb
+    println!();
 }
 
 fn fetch_models(
@@ -211,18 +184,13 @@ fn fetch_models(
     for model_id in models {
         match client.is_cached(model_id, platform) {
             Ok(true) => {
-                println!("{} {} (cached)", "✅".bright_green(), model_id.cyan());
+                ui::ok(&format!("{} (cached)", model_id));
                 skip_count += 1;
                 continue;
             }
             Ok(false) => {}
             Err(e) => {
-                println!(
-                    "{} {} (cache check failed: {})",
-                    "❌".bright_red(),
-                    model_id,
-                    e
-                );
+                ui::err(&format!("{} (cache check failed: {})", model_id, e));
                 error_count += 1;
                 continue;
             }
@@ -230,36 +198,26 @@ fn fetch_models(
 
         match client.resolve(model_id, platform) {
             Ok(resolved) => {
-                let pb = ProgressBar::new(resolved.size_bytes);
-                pb.set_style(
-                    ProgressStyle::default_bar()
-                        .template("{spinner:.green} {msg} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")
-                        .unwrap()
-                        .progress_chars("█▓▒░  ")
-                );
-                pb.set_message(model_id.clone());
+                let pb = ui::download_bar(resolved.size_bytes, model_id);
 
                 match client.fetch(model_id, platform, |progress| {
                     let bytes_done = (progress * resolved.size_bytes as f32) as u64;
                     pb.set_position(bytes_done);
                 }) {
                     Ok(_) => {
-                        pb.finish_with_message(format!("{} ✓", model_id));
+                        pb.finish_and_clear();
+                        ui::ok(model_id);
                         success_count += 1;
                     }
                     Err(e) => {
-                        pb.abandon_with_message(format!("{} ✗ {}", model_id, e));
+                        pb.abandon();
+                        ui::err(&format!("{} ({})", model_id, e));
                         error_count += 1;
                     }
                 }
             }
             Err(e) => {
-                println!(
-                    "{} {} (resolution failed: {})",
-                    "❌".bright_red(),
-                    model_id,
-                    e
-                );
+                ui::err(&format!("{} (resolution failed: {})", model_id, e));
                 error_count += 1;
             }
         }

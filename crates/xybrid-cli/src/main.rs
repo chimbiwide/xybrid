@@ -27,12 +27,12 @@
 mod commands;
 #[allow(dead_code)]
 mod tracing_viz;
+pub mod ui;
 
 use commands::{CacheCommand, ModelsCommand};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use colored::*;
 use std::path::PathBuf;
 use xybrid_core::target::Platform;
 use xybrid_sdk::SdkError;
@@ -299,7 +299,7 @@ fn main() -> Result<()> {
 
     let telemetry_enabled = init_telemetry(&cli);
     if telemetry_enabled && !cli.quiet {
-        println!("📡 Telemetry enabled ({})", cli.platform_url);
+        ui::hint(&format!("Telemetry enabled ({})", cli.platform_url));
     }
 
     let result = run_command(cli);
@@ -311,10 +311,10 @@ fn main() -> Result<()> {
 
     if let Err(ref err) = result {
         if let Some(msg) = find_model_not_found(err) {
-            eprintln!("{} {}\n", "error:".bright_red().bold(), msg);
-            eprintln!(
-                "Want this model added? Open a model request:\n  https://github.com/xybrid-ai/xybrid/issues/new?template=model-request.yml"
-            );
+            ui::err(msg);
+            println!();
+            ui::hint("Want this model added? Open a model request:");
+            ui::hint("  https://github.com/xybrid-ai/xybrid/issues/new?template=model-request.yml");
             std::process::exit(1);
         }
     }
