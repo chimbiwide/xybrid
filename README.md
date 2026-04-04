@@ -33,6 +33,7 @@
 <br>
 [![License][license-shield]][license-url]
 [![Build][build-shield]][build-url]
+[![OpenSSF Scorecard][scorecard-shield]][scorecard-url]
 [![Stars][stars-shield]][stars-url]
 [![Release][release-shield]][release-url]
 [![Release Date][release-date-shield]][release-url]
@@ -53,6 +54,8 @@
 [license-url]: https://opensource.org/licenses/Apache-2.0
 [build-shield]: https://img.shields.io/github/actions/workflow/status/xybrid-ai/xybrid/ci.yml?branch=master&style=flat
 [build-url]: https://github.com/xybrid-ai/xybrid/actions
+[scorecard-shield]: https://api.scorecard.dev/projects/github.com/xybrid-ai/xybrid/badge
+[scorecard-url]: https://scorecard.dev/viewer/?uri=github.com/xybrid-ai/xybrid
 [stars-shield]: https://img.shields.io/github/stars/xybrid-ai/xybrid?style=flat
 [stars-url]: https://github.com/xybrid-ai/xybrid/stargazers
 [release-shield]: https://img.shields.io/github/v/release/xybrid-ai/xybrid?style=flat&sort=semver
