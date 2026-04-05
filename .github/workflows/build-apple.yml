@@ -6,6 +6,8 @@ on:
   pull_request:
     branches: [main]
 
+permissions: read-all
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
@@ -15,10 +17,10 @@ jobs:
     name: Build XCFramework
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
         with:
           targets: >-
             aarch64-apple-ios,
@@ -30,7 +32,7 @@ jobs:
       # Expected cache hit rate: ~80-90% on incremental changes
       # Cache includes: ~/.cargo/registry, ~/.cargo/git, target/
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           # Prefix cache key with workflow name to avoid collisions with other workflows
           prefix-key: "v1-rust"
@@ -63,7 +65,7 @@ jobs:
           file "$XCFW_PATH/macos-arm64/libxybrid_uniffi.a" || true
 
       - name: Upload XCFramework artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: XybridFFI-xcframework
           path: bindings/apple/XCFrameworks/XybridFFI.xcframework
