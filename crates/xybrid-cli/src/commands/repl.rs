@@ -329,19 +329,24 @@ fn ensure_model_cached(
     model_id: &str,
     client: &RegistryClient,
 ) -> Result<()> {
-    if !client.is_cached(model_id, None).unwrap_or(false) {
-        let resolved = client.resolve(model_id, None)?;
-        let pb = ui::download_bar(resolved.size_bytes, model_id);
+    let resolved = client.resolve(model_id, None)?;
 
+    if !client.is_cached(model_id, None).unwrap_or(false) {
+        let pb = ui::download_bar(resolved.size_bytes, model_id);
         let model_dir = client.fetch_extracted(model_id, None, |p| {
             pb.set_position((p * resolved.size_bytes as f32) as u64);
         })?;
         pb.finish_and_clear();
         ui::ok(&format!("{} downloaded", model_id));
         desc.bundle_path = Some(model_dir.to_string_lossy().to_string());
+    } else if resolved.passthrough {
+        // Passthrough models: extraction dir is managed by fetch_extracted (idempotent)
+        let model_dir = client.fetch_extracted(model_id, None, |_| {})?;
+        desc.bundle_path = Some(model_dir.to_string_lossy().to_string());
     } else {
+        // Standard .xyb bundle: extract from cache
         let cache = xybrid_sdk::cache::CacheManager::new()?;
-        let xyb_path = client.get_cache_path(&client.resolve(model_id, None)?);
+        let xyb_path = client.get_cache_path(&resolved);
         let model_dir = cache.ensure_extracted(&xyb_path)?;
         desc.bundle_path = Some(model_dir.to_string_lossy().to_string());
     }

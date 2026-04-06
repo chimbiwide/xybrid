@@ -592,18 +592,40 @@ pub(crate) fn run_model(
         &format!("{} ({})", resolved.format, resolved.quantization),
     );
 
-    let bundle_path = fetch_or_cache(&client, model_id, platform, &resolved)?;
-    ui::kv("Location", &bundle_path.display().to_string());
-    println!();
+    let extract_dir = if resolved.passthrough {
+        // Passthrough models (e.g., GGUF): download raw file + write metadata directly
+        let pb = ui::download_bar(resolved.size_bytes, model_id);
+        let dir = client
+            .fetch_extracted(model_id, platform, |progress| {
+                let bytes_done = (progress * resolved.size_bytes as f32) as u64;
+                pb.set_position(bytes_done);
+            })
+            .context(format!(
+                "Failed to fetch passthrough model '{}' from registry",
+                model_id
+            ))?;
+        pb.finish_and_clear();
+        ui::ok(&format!("Downloaded {}", model_id));
+        ui::kv("Location", &dir.display().to_string());
+        println!();
+        drop(_fetch_span);
+        dir
+    } else {
+        // Standard .xyb bundle flow
+        let bundle_path = fetch_or_cache(&client, model_id, platform, &resolved)?;
+        ui::kv("Location", &bundle_path.display().to_string());
+        println!();
+        drop(_fetch_span);
 
-    drop(_fetch_span);
-
-    let sp = ui::spinner("Loading and extracting bundle...");
-    let cache = xybrid_sdk::cache::CacheManager::new().context("Failed to create cache manager")?;
-    let extract_dir = cache
-        .ensure_extracted(&bundle_path)
-        .context("Failed to extract bundle")?;
-    sp.finish_and_clear();
+        let sp = ui::spinner("Loading and extracting bundle...");
+        let cache =
+            xybrid_sdk::cache::CacheManager::new().context("Failed to create cache manager")?;
+        let dir = cache
+            .ensure_extracted(&bundle_path)
+            .context("Failed to extract bundle")?;
+        sp.finish_and_clear();
+        dir
+    };
 
     let (metadata, input) =
         prepare_bundle_execution(&extract_dir, input_audio, input_text, voice, dry_run)?;
