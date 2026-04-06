@@ -13,6 +13,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.0-beta10] - 2026-04-07
+
+### Added
+
+- **CLI install scripts** (#19): Shell and PowerShell install scripts with installation guide
+- **Chinese documentation**: Full Chinese localization for all documentation pages
+- **CI hardening**: Dependabot grouping, concurrency groups, OpenSSF Scorecard audit
+
+### Fixed
+
+- **Passthrough model download**: Fix bare model download unpack for passthrough GGUF models
+- **HuggingFace CLI feature**: Enable `huggingface` feature in CLI for all platforms
+- **Install script release selection**: Fix release binary selection in install scripts
+
+---
+
 ## [0.1.0-beta9] - 2026-04-02
 
 ### Added

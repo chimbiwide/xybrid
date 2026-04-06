@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.0-beta10
+
+* Version bump to track core release. No Flutter API changes.
+
 ## 0.1.0-beta9
 
 * Added `fromDirectory()` for loading custom local models
