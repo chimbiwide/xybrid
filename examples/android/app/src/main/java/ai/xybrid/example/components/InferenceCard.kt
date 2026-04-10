@@ -26,7 +26,14 @@ fun InferenceCard(
     inputText: String,
     selectedVoiceId: String?,
     pcmPlayer: PcmPlayer,
+    recordedAudio: ByteArray?,
+    isRecording: Boolean,
+    hasAudioPermission: Boolean,
     onInputTextChange: (String) -> Unit,
+    onRequestAudioPermission: () -> Unit,
+    onStartRecording: () -> Unit,
+    onStopRecording: () -> Unit,
+    onClearRecording: () -> Unit,
     onRunInference: () -> Unit,
     onRetry: () -> Unit
 ) {
@@ -65,33 +72,29 @@ fun InferenceCard(
                     )
                 }
             } else if (task == ModelTask.ASR) {
-                Surface(
-                    color = MaterialTheme.colorScheme.surfaceVariant,
-                    shape = MaterialTheme.shapes.small,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        Text(
-                            text = "Audio Input Required",
-                            style = MaterialTheme.typography.labelMedium
-                        )
-                        Text(
-                            text = "Speech recognition models require audio input. " +
-                                    "Audio recording is not yet supported in this example.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
+                AudioRecordingInput(
+                    recordedAudio = recordedAudio,
+                    isRecording = isRecording,
+                    hasPermission = hasAudioPermission,
+                    enabled = modelState is ModelState.Loaded && inferenceState !is InferenceState.Running,
+                    onRequestPermission = onRequestAudioPermission,
+                    onStartRecording = onStartRecording,
+                    onStopRecording = onStopRecording,
+                    onClearRecording = onClearRecording
+                )
             }
 
             when (val state = inferenceState) {
                 is InferenceState.Idle -> {
+                    val canRun = modelState is ModelState.Loaded
+                            && task != null
+                            && when (task) {
+                                ModelTask.TTS, ModelTask.LLM -> inputText.isNotBlank()
+                                ModelTask.ASR -> recordedAudio != null && recordedAudio.isNotEmpty()
+                            }
                     Button(
                         onClick = onRunInference,
-                        enabled = modelState is ModelState.Loaded
-                                && task != null
-                                && (task.acceptsTextInput() && inputText.isNotBlank()),
+                        enabled = canRun,
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(
@@ -146,6 +149,112 @@ fun InferenceCard(
                     ) {
                         Text("Retry")
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AudioRecordingInput(
+    recordedAudio: ByteArray?,
+    isRecording: Boolean,
+    hasPermission: Boolean,
+    enabled: Boolean,
+    onRequestPermission: () -> Unit,
+    onStartRecording: () -> Unit,
+    onStopRecording: () -> Unit,
+    onClearRecording: () -> Unit
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = MaterialTheme.shapes.small,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                text = "Audio Input",
+                style = MaterialTheme.typography.labelMedium
+            )
+
+            if (!hasPermission) {
+                Text(
+                    text = "Microphone permission is required for speech recognition.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Button(
+                    onClick = onRequestPermission,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Grant Microphone Permission")
+                }
+            } else if (isRecording) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    Text(
+                        text = "Recording...",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+                Button(
+                    onClick = onStopRecording,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Stop Recording")
+                }
+            } else if (recordedAudio != null && recordedAudio.isNotEmpty()) {
+                val durationSec = recordedAudio.size.toFloat() / 2 / 16000
+                val sizeKb = recordedAudio.size / 1024
+                Text(
+                    text = "Recorded: ${"%.1f".format(durationSec)}s  |  ${sizeKb} KB  |  16kHz mono",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onClearRecording,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Discard")
+                    }
+                    Button(
+                        onClick = onStartRecording,
+                        enabled = enabled,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Re-record")
+                    }
+                }
+            } else {
+                Text(
+                    text = "Tap below to record audio for transcription.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Button(
+                    onClick = onStartRecording,
+                    enabled = enabled,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Start Recording")
                 }
             }
         }

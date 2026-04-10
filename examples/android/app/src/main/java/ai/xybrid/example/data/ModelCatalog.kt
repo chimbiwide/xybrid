@@ -38,6 +38,14 @@ val MODEL_CATALOG = listOf(
         parameterCount = "1B"
     ),
     CatalogModel(
+        id = "lfm2.5-350m",
+        displayName = "LFM2.5 350M",
+        task = ModelTask.LLM,
+        description = "Liquid AI's hybrid conv+attention LLM, 9 languages, tool calling",
+        defaultInput = "Hello, welcome to Xybrid!",
+        parameterCount = "354M"
+    ),
+    CatalogModel(
         id = "kokoro-82m",
         displayName = "Kokoro 82M",
         task = ModelTask.TTS,

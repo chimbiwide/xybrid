@@ -1,5 +1,8 @@
 package ai.xybrid.example
 
+import android.Manifest
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -7,6 +10,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -19,6 +23,7 @@ import ai.xybrid.Envelope
 import ai.xybrid.displayMessage
 
 // State and component imports
+import ai.xybrid.example.audio.AudioRecorder
 import ai.xybrid.example.audio.PcmPlayer
 import ai.xybrid.example.data.CatalogModel
 import ai.xybrid.example.data.ModelTask
@@ -39,11 +44,25 @@ fun XybridExampleApp() {
     var selectedModel by remember { mutableStateOf<CatalogModel?>(null) }
     var inputText by remember { mutableStateOf("") }
     var selectedVoiceId by remember { mutableStateOf<String?>(null) }
+    var recordedAudio by remember { mutableStateOf<ByteArray?>(null) }
+    var isRecording by remember { mutableStateOf(false) }
 
     val pcmPlayer = remember { PcmPlayer() }
+    val audioRecorder = remember { AudioRecorder() }
     DisposableEffect(Unit) {
-        onDispose { pcmPlayer.release() }
+        onDispose {
+            pcmPlayer.release()
+            audioRecorder.release()
+        }
     }
+
+    val context = LocalContext.current
+    var hasAudioPermission by remember {
+        mutableStateOf(audioRecorder.hasPermission(context))
+    }
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted -> hasAudioPermission = granted }
 
     val coroutineScope = rememberCoroutineScope()
     val scrollState = rememberScrollState()
@@ -70,6 +89,7 @@ fun XybridExampleApp() {
                 selectedModel = model
                 inputText = model.defaultInput
                 selectedVoiceId = null
+                recordedAudio = null
             },
             onLoadModel = {
                 val model = selectedModel ?: return@ModelLoadingCard
@@ -100,6 +120,7 @@ fun XybridExampleApp() {
                 modelState = ModelState.NotLoaded
                 inferenceState = InferenceState.Idle
                 selectedVoiceId = null
+                recordedAudio = null
             },
             onRetry = { modelState = ModelState.NotLoaded }
         )
@@ -112,7 +133,28 @@ fun XybridExampleApp() {
             inputText = inputText,
             selectedVoiceId = selectedVoiceId,
             pcmPlayer = pcmPlayer,
+            recordedAudio = recordedAudio,
+            isRecording = isRecording,
+            hasAudioPermission = hasAudioPermission,
             onInputTextChange = { inputText = it },
+            onRequestAudioPermission = {
+                permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            },
+            onStartRecording = {
+                recordedAudio = null
+                if (audioRecorder.start(context)) {
+                    isRecording = true
+                }
+            },
+            onStopRecording = {
+                isRecording = false
+                recordedAudio = audioRecorder.stop()
+            },
+            onClearRecording = {
+                isRecording = false
+                audioRecorder.release()
+                recordedAudio = null
+            },
             onRunInference = {
                 val model = (modelState as? ModelState.Loaded)?.model ?: return@InferenceCard
                 val task = selectedModel?.task ?: return@InferenceCard
@@ -130,7 +172,11 @@ fun XybridExampleApp() {
                                     }
                                 }
                                 ModelTask.LLM -> Envelope.text(inputText)
-                                ModelTask.ASR -> Envelope.text(inputText) // placeholder
+                                ModelTask.ASR -> {
+                                    val audio = recordedAudio
+                                        ?: error("No recorded audio available")
+                                    Envelope.audio(audio, 16000u, 1u)
+                                }
                             }
                             model.run(envelope, null)
                         }

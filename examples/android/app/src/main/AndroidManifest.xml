@@ -3,6 +3,8 @@
 
     <!-- Network access for model downloading -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Microphone access for speech recognition -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
     <application
         android:allowBackup="true"
