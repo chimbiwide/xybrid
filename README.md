@@ -106,7 +106,38 @@ Every SDK wraps the same Rust core — identical model support and behavior acro
 
 ### Install
 
-**CLI** — one-liner (no Rust required):
+**Unity** → Package Manager:
+
+```sh
+https://github.com/xybrid-ai/xybrid.git#upm
+```
+
+**Flutter** → `pubspec.yaml`:
+
+```yaml
+dependencies:
+  xybrid_flutter: ^0.1.0
+```
+
+**Swift (iOS / macOS)**:
+
+```swift
+// Package.swift
+dependencies: [
+    .package(url: "https://github.com/xybrid-ai/xybrid.git", from: "0.1.0")
+]
+```
+
+**Kotlin (Android)**:
+
+```gradle
+// build.gradle.kts
+dependencies {
+    implementation("ai.xybrid:xybrid-kotlin:0.1.0-beta10")
+}
+```
+
+**CLI**
 
 ```bash
 # macOS / Linux
@@ -118,39 +149,7 @@ curl -sSL https://raw.githubusercontent.com/xybrid-ai/xybrid/master/install.sh |
 irm https://raw.githubusercontent.com/xybrid-ai/xybrid/master/install.ps1 | iex
 ```
 
-Or with Rust:
-
-```bash
-cargo install --git https://github.com/xybrid-ai/xybrid xybrid-cli
-```
-
-Or download a binary directly from [Releases](https://github.com/xybrid-ai/xybrid/releases).
-
-See the full [Installation Guide](docs/INSTALLATION.md) for platform features, hardware acceleration, and CLI reference.
-
-**Unity** — Package Manager → Add from git URL:
-
-```bash
-https://github.com/xybrid-ai/xybrid.git#upm
-```
-
-> The `upm` branch contains pre-built native libraries for all platforms.
-> To pin a specific version: `https://github.com/xybrid-ai/xybrid.git#upm/v0.1.0-beta8`
-
-**Flutter** — add to your `pubspec.yaml`:
-
-```yaml
-dependencies:
-  xybrid_flutter: ^0.1.0
-```
-
-**Kotlin (Android)** — add to your `build.gradle.kts`:
-
-```gradle
-dependencies {
-    implementation("ai.xybrid:xybrid-kotlin:0.1.0-beta10")
-}
-```
+See the full [Installation Guide](docs/INSTALLATION.md) for all options, hardware acceleration, and CLI reference.
 
 ---
 
@@ -301,7 +300,8 @@ All models run entirely on-device. No cloud, no API keys required. Browse the fu
 | Qwen3-TTS 0.6B | TTS | 600M | P2 | Blocked (needs custom SafeTensors runtime) |
 | Chatterbox Turbo | TTS | 350M | P3 | Blocked (needs ModelGraph template) |
 
-### Bring Your Own Model (Experimental)
+<details>
+<summary><h3>Bring Your Own Model (Experimental)</h3></summary>
 
 > **Note**: BYM support is experimental. The `model_metadata.json` schema is stable, but the AI-assisted tooling (`/xybrid-init`) is under active development and may not handle all model types yet.
 
@@ -334,6 +334,8 @@ Skills are agent-agnostic and live in [`agents/skills/`](agents/skills/). The in
 ```
 
 See the [model metadata docs](docs/sdk/API_REFERENCE.md) for the full schema, or look at existing examples in [`integration-tests/fixtures/models/`](integration-tests/fixtures/models/).
+
+</details>
 
 ---
 
