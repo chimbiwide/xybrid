@@ -620,8 +620,8 @@ pub(crate) fn run_model(
             drop(_fetch_span);
 
             let sp = ui::spinner("Loading and extracting bundle...");
-            let cache = xybrid_sdk::cache::CacheManager::new()
-                .context("Failed to create cache manager")?;
+            let cache =
+                xybrid_sdk::cache::CacheManager::new().context("Failed to create cache manager")?;
             let dir = cache
                 .ensure_extracted(&bundle_path)
                 .context("Failed to extract bundle")?;

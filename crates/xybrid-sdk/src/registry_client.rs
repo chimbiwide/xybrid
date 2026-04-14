@@ -297,6 +297,18 @@ impl RegistryClient {
                     return Ok(result);
                 }
                 Err(err) => {
+                    // Offline errors (DNS, connection refused, network I/O) are
+                    // not the registry's fault — they represent local
+                    // unreachability. Don't count them toward the failure
+                    // threshold (otherwise the breaker opens for 30s and the
+                    // user sees "circuit open" even after they come back
+                    // online), and skip the retry loop within this URL since
+                    // backoff won't help a DNS failure. Return immediately and
+                    // let `execute_with_fallback` try the next URL.
+                    if matches!(&err, SdkError::Offline(_)) {
+                        return Err(err);
+                    }
+
                     circuit.record_failure();
 
                     // Check for rate limit (opens circuit immediately)
@@ -386,22 +398,28 @@ impl RegistryClient {
     }
 
     /// Convert ureq error to SdkError.
+    ///
+    /// Transport-level failures (DNS, connection refused, low-level I/O) are
+    /// reported as `SdkError::Offline` rather than `NetworkError`. They represent
+    /// "the local machine cannot reach the registry" — not a registry-side
+    /// problem — and the circuit breaker deliberately does not count them
+    /// toward the failure threshold (see `execute_with_retry_for_url`).
     fn ureq_error_to_sdk_error(&self, error: ureq::Error, operation: &str) -> SdkError {
         match error {
             ureq::Error::Status(status, _) => self.status_to_error(status, operation),
             ureq::Error::Transport(transport) => {
                 let kind = transport.kind();
                 match kind {
-                    ureq::ErrorKind::Dns => SdkError::NetworkError(format!(
+                    ureq::ErrorKind::Dns => SdkError::Offline(format!(
                         "Failed to {} (DNS resolution failed)",
                         operation
                     )),
-                    ureq::ErrorKind::ConnectionFailed => SdkError::NetworkError(format!(
-                        "Failed to {} (connection failed)",
+                    ureq::ErrorKind::ConnectionFailed => SdkError::Offline(format!(
+                        "Failed to {} (connection refused or host unreachable)",
                         operation
                     )),
-                    ureq::ErrorKind::Io => SdkError::NetworkError(format!(
-                        "Failed to {} (I/O error: {})",
+                    ureq::ErrorKind::Io => SdkError::Offline(format!(
+                        "Failed to {} (network I/O error: {})",
                         operation,
                         transport.message().unwrap_or("unknown")
                     )),
@@ -1205,5 +1223,60 @@ mod tests {
         if let Some(actual) = client.resolve_offline(mask) {
             assert_eq!(actual, expected);
         }
+    }
+
+    #[test]
+    fn test_offline_error_does_not_trip_circuit_breaker() {
+        // When the local machine can't reach the registry (DNS/connect-refused),
+        // the circuit breaker must NOT open. Opening it for 30s punishes the
+        // user even after they come back online and poisons the cached-model
+        // path because `can_execute()` would short-circuit before resolve_offline
+        // has a chance to run in callers that consult the breaker state.
+        let client = RegistryClient::with_url("https://primary.example.invalid").unwrap();
+        let circuit = client.circuits[0].clone();
+        assert!(circuit.is_closed(), "breaker starts closed");
+
+        let mut op = |_url: &str| -> Result<ureq::Response, SdkError> {
+            Err(SdkError::Offline("simulated offline".to_string()))
+        };
+
+        let result =
+            client.execute_with_retry_for_url("https://primary.example.invalid", &circuit, &mut op);
+        assert!(matches!(result, Err(SdkError::Offline(_))));
+        assert_eq!(
+            circuit.failure_count(),
+            0,
+            "breaker must not count offline errors toward the failure threshold"
+        );
+        assert!(
+            circuit.is_closed(),
+            "breaker must stay closed after offline errors"
+        );
+    }
+
+    #[test]
+    fn test_offline_error_short_circuits_retry_loop() {
+        // A DNS failure is not going to recover in 2s, 4s, or 8s. The retry
+        // loop must bail out after a single attempt rather than grinding
+        // through the full exponential-backoff schedule.
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        let client = RegistryClient::with_url("https://primary.example.invalid").unwrap();
+        let circuit = client.circuits[0].clone();
+        let call_count = AtomicU32::new(0);
+
+        let mut op = |_url: &str| -> Result<ureq::Response, SdkError> {
+            call_count.fetch_add(1, Ordering::SeqCst);
+            Err(SdkError::Offline("simulated offline".to_string()))
+        };
+
+        let result =
+            client.execute_with_retry_for_url("https://primary.example.invalid", &circuit, &mut op);
+        assert!(result.is_err());
+        assert_eq!(
+            call_count.load(Ordering::SeqCst),
+            1,
+            "offline errors must not be retried within a single URL"
+        );
     }
 }

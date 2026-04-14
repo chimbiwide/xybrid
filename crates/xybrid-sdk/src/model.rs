@@ -77,6 +77,13 @@ pub enum SdkError {
     ConfigError(String),
     #[error("Network error: {0}")]
     NetworkError(String),
+    /// The registry could not be reached at all (DNS failure, connection refused,
+    /// network unreachable, interface down). This is distinct from `NetworkError`
+    /// because it represents *local* unreachability rather than a server-side problem,
+    /// and the circuit breaker treats it differently — offline errors don't count
+    /// toward the failure threshold so callers aren't punished for being offline.
+    #[error("Registry unreachable: {0}")]
+    Offline(String),
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
     #[error("Cache error: {0}")]
@@ -101,6 +108,10 @@ impl xybrid_core::http::RetryableError for SdkError {
             SdkError::NetworkError(_) => true,
             SdkError::RateLimited { .. } => true,
             SdkError::Timeout { .. } => true,
+            // Offline is "retryable" only across URLs — the fallback registry
+            // may be reachable even when the primary isn't. Within a single URL
+            // the retry loop short-circuits immediately (see registry_client).
+            SdkError::Offline(_) => true,
 
             // Non-retryable errors (permanent failures)
             SdkError::ModelNotFound(_) => false,
