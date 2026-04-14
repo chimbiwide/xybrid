@@ -127,27 +127,17 @@ fn resolve_device_stage(
     model_id: &str,
     client: &RegistryClient,
 ) -> Result<()> {
-    let is_cached = client.is_cached(model_id, None).unwrap_or(false);
-
-    if !is_cached {
-        download_model(desc, model_id, client)?;
-    } else {
-        match client.resolve(model_id, None) {
-            Ok(resolved) => {
-                let cache_path = client.get_cache_path(&resolved);
-                desc.bundle_path = Some(cache_path.to_string_lossy().to_string());
-            }
-            Err(e) => {
-                return Err(anyhow::anyhow!(
-                    "Failed to resolve model '{}': {}",
-                    model_id,
-                    e
-                ));
-            }
-        }
+    // Offline-first: if the model is already extracted locally, point the stage
+    // at its extraction directory and skip the registry. This prevents the
+    // circuit breaker from tripping on a cached model when the registry is
+    // unreachable.
+    if let Some(extract_dir) = client.resolve_offline(model_id) {
+        desc.bundle_path = Some(extract_dir.to_string_lossy().to_string());
+        return Ok(());
     }
 
-    Ok(())
+    // Not cached locally — must fetch from the registry.
+    download_model(desc, model_id, client)
 }
 
 fn download_model(
@@ -578,53 +568,66 @@ pub(crate) fn run_model(
         None
     };
 
-    let resolved = client.resolve(model_id, platform).context(format!(
-        "Failed to resolve model '{}' from registry",
-        model_id
-    ))?;
-
-    println!();
-    ui::kv("Repository", &resolved.hf_repo);
-    ui::kv("File", &resolved.file);
-    ui::kv("Size", &format_size(resolved.size_bytes));
-    ui::kv(
-        "Format",
-        &format!("{} ({})", resolved.format, resolved.quantization),
-    );
-
-    let extract_dir = if resolved.passthrough {
-        // Passthrough models (e.g., GGUF): download raw file + write metadata directly
-        let pb = ui::download_bar(resolved.size_bytes, model_id);
-        let dir = client
-            .fetch_extracted(model_id, platform, |progress| {
-                let bytes_done = (progress * resolved.size_bytes as f32) as u64;
-                pb.set_position(bytes_done);
-            })
-            .context(format!(
-                "Failed to fetch passthrough model '{}' from registry",
-                model_id
-            ))?;
-        pb.finish_and_clear();
-        ui::ok(&format!("Downloaded {}", model_id));
-        ui::kv("Location", &dir.display().to_string());
+    // Offline-first: if the model has already been downloaded and extracted,
+    // skip the registry entirely. This keeps `xybrid run` working when the
+    // machine is offline (or the registry is unreachable) for any model that
+    // was previously fetched.
+    let extract_dir = if let Some(cached_dir) = client.resolve_offline(model_id) {
+        println!();
+        ui::ok("Using locally cached model");
+        ui::kv("Location", &cached_dir.display().to_string());
         println!();
         drop(_fetch_span);
-        dir
+        cached_dir
     } else {
-        // Standard .xyb bundle flow
-        let bundle_path = fetch_or_cache(&client, model_id, platform, &resolved)?;
-        ui::kv("Location", &bundle_path.display().to_string());
-        println!();
-        drop(_fetch_span);
+        let resolved = client.resolve(model_id, platform).context(format!(
+            "Failed to resolve model '{}' from registry",
+            model_id
+        ))?;
 
-        let sp = ui::spinner("Loading and extracting bundle...");
-        let cache =
-            xybrid_sdk::cache::CacheManager::new().context("Failed to create cache manager")?;
-        let dir = cache
-            .ensure_extracted(&bundle_path)
-            .context("Failed to extract bundle")?;
-        sp.finish_and_clear();
-        dir
+        println!();
+        ui::kv("Repository", &resolved.hf_repo);
+        ui::kv("File", &resolved.file);
+        ui::kv("Size", &format_size(resolved.size_bytes));
+        ui::kv(
+            "Format",
+            &format!("{} ({})", resolved.format, resolved.quantization),
+        );
+
+        if resolved.passthrough {
+            // Passthrough models (e.g., GGUF): download raw file + write metadata directly
+            let pb = ui::download_bar(resolved.size_bytes, model_id);
+            let dir = client
+                .fetch_extracted(model_id, platform, |progress| {
+                    let bytes_done = (progress * resolved.size_bytes as f32) as u64;
+                    pb.set_position(bytes_done);
+                })
+                .context(format!(
+                    "Failed to fetch passthrough model '{}' from registry",
+                    model_id
+                ))?;
+            pb.finish_and_clear();
+            ui::ok(&format!("Downloaded {}", model_id));
+            ui::kv("Location", &dir.display().to_string());
+            println!();
+            drop(_fetch_span);
+            dir
+        } else {
+            // Standard .xyb bundle flow
+            let bundle_path = fetch_or_cache(&client, model_id, platform, &resolved)?;
+            ui::kv("Location", &bundle_path.display().to_string());
+            println!();
+            drop(_fetch_span);
+
+            let sp = ui::spinner("Loading and extracting bundle...");
+            let cache = xybrid_sdk::cache::CacheManager::new()
+                .context("Failed to create cache manager")?;
+            let dir = cache
+                .ensure_extracted(&bundle_path)
+                .context("Failed to extract bundle")?;
+            sp.finish_and_clear();
+            dir
+        }
     };
 
     let (metadata, input) =

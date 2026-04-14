@@ -15,7 +15,7 @@
     clippy::wildcard_in_or_patterns
 )]
 
-//! Xybrid Core - The Rust orchestrator runtime for hybrid cloud-edge AI inference.
+//! Xybrid Core
 //!
 //! ## Quick Start
 //!

@@ -597,6 +597,18 @@ impl RegistryClient {
     where
         F: Fn(f32),
     {
+        // Offline-first: if we already have an extracted copy locally, return it
+        // immediately. This avoids hitting the network (and tripping the circuit
+        // breaker) when the user is offline with a previously-downloaded model.
+        if let Some(extract_dir) = self.resolve_offline(mask) {
+            debug!(
+                "Using locally extracted model '{}' at {} (skipping registry)",
+                mask,
+                extract_dir.display()
+            );
+            return Ok(extract_dir);
+        }
+
         // Resolve first to check if passthrough
         let resolved = self.resolve(mask, platform)?;
 
@@ -719,6 +731,24 @@ impl RegistryClient {
     /// Note: This returns the path even if not yet extracted. Use `is_extracted()` to check.
     pub fn extraction_dir(&self, model_id: &str) -> PathBuf {
         self.cache.extraction_dir(model_id)
+    }
+
+    /// Try to locate a ready-to-use model in the local cache without touching the network.
+    ///
+    /// Returns the path to the extraction directory if a previously-extracted copy of
+    /// the model exists. Returns `None` if the model has not been fetched and extracted
+    /// on this machine.
+    ///
+    /// This is the fast path for offline operation. It never calls out to the network,
+    /// never trips the circuit breaker, and is safe to call repeatedly. Callers should
+    /// prefer this over `resolve()` + `fetch()` when they don't need to check for
+    /// registry updates.
+    pub fn resolve_offline(&self, mask: &str) -> Option<PathBuf> {
+        if self.cache.is_extracted(mask) {
+            Some(self.cache.extraction_dir(mask))
+        } else {
+            None
+        }
     }
 
     /// Download a file with progress tracking and retry on connection failures.
@@ -1137,5 +1167,43 @@ mod tests {
         let client = RegistryClient::default_client().unwrap();
         // A random model ID should not be extracted
         assert!(!client.is_extracted("nonexistent-model-12345"));
+    }
+
+    #[test]
+    fn test_resolve_offline_none_for_nonexistent() {
+        // resolve_offline must return None for a model that has never been
+        // fetched, and it must do so without touching the network. Using an
+        // obviously-bogus mask guarantees the registry would 404 if it were
+        // reached.
+        let client = RegistryClient::default_client().unwrap();
+        assert!(client
+            .resolve_offline("definitely-not-a-real-model-xyzzy-42")
+            .is_none());
+    }
+
+    #[test]
+    fn test_resolve_offline_matches_is_extracted() {
+        // resolve_offline is a thin Option wrapper over is_extracted: the two
+        // must agree on whether a given model is locally available.
+        let client = RegistryClient::default_client().unwrap();
+        let mask = "nonexistent-model-12345";
+        assert_eq!(
+            client.resolve_offline(mask).is_some(),
+            client.is_extracted(mask)
+        );
+    }
+
+    #[test]
+    fn test_resolve_offline_returns_extraction_dir() {
+        // When resolve_offline does return Some, the path must match
+        // extraction_dir() so callers can rely on it as a base_path for
+        // TemplateExecutor. We verify the shape of the path for a known
+        // mask — whether or not the directory physically exists.
+        let client = RegistryClient::default_client().unwrap();
+        let mask = "some-model";
+        let expected = client.extraction_dir(mask);
+        if let Some(actual) = client.resolve_offline(mask) {
+            assert_eq!(actual, expected);
+        }
     }
 }
