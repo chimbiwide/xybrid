@@ -6,6 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use xybrid_core::bundler::XyBundle;
 use xybrid_core::execution_template::ModelMetadata;
+use xybrid_sdk::model::SdkError;
 use xybrid_sdk::registry_client::RegistryClient;
 
 use super::types::ModelsCommand;
@@ -27,9 +28,18 @@ pub(crate) fn handle_models_command(command: ModelsCommand) -> Result<()> {
 fn list_models(client: &RegistryClient) -> Result<()> {
     ui::header("Model Registry");
 
-    let models = client
-        .list_models()
-        .context("Failed to list models from registry")?;
+    // If the registry is reachable, show the full catalog. If we're offline,
+    // fall back to listing the models that are already cached locally so the
+    // user still sees something useful instead of a bare error.
+    let models = match client.list_models() {
+        Ok(models) => models,
+        Err(SdkError::Offline(msg)) => {
+            ui::warning(&format!("Registry unreachable ({}).", msg));
+            ui::hint("Showing models available offline from local cache:");
+            return list_offline_models(client);
+        }
+        Err(e) => return Err(anyhow::Error::from(e).context("Failed to list models from registry")),
+    };
 
     if models.is_empty() {
         ui::hint("No models found in registry.");
@@ -58,6 +68,31 @@ fn list_models(client: &RegistryClient) -> Result<()> {
 
     ui::footer(&format!("{} models available", models.len()));
 
+    Ok(())
+}
+
+/// Render the local-cache model listing for offline use.
+///
+/// Called as a fallback when the registry is unreachable. Shows every model
+/// that's been downloaded and extracted on this machine — these are the ones
+/// the user can run right now without needing a network.
+fn list_offline_models(client: &RegistryClient) -> Result<()> {
+    let ids = client.list_offline_models();
+
+    if ids.is_empty() {
+        println!();
+        ui::hint("No models are currently cached on this machine.");
+        ui::hint("Connect to the network and run a model to download it.");
+        return Ok(());
+    }
+
+    println!();
+    ui::section("CACHED LOCALLY");
+    println!();
+    for id in &ids {
+        ui::bullet(id, "ready to run offline");
+    }
+    ui::footer(&format!("{} models available offline", ids.len()));
     Ok(())
 }
 

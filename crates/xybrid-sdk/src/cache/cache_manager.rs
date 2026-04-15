@@ -402,6 +402,40 @@ impl CacheManager {
         extract_dir.join("model_metadata.json").exists()
     }
 
+    /// List all model IDs that have been extracted and are ready to run offline.
+    ///
+    /// Walks the `{cache}/extracted/` directory and returns every subdirectory
+    /// whose name is a model ID (i.e. contains a `model_metadata.json`). The
+    /// returned list is sorted alphabetically for stable output.
+    ///
+    /// This is an offline operation — it never touches the network.
+    pub fn list_extracted_model_ids(&self) -> Vec<String> {
+        let extracted_root = self
+            .cache_dir
+            .parent()
+            .unwrap_or(&self.cache_dir)
+            .join("extracted");
+
+        let Ok(entries) = std::fs::read_dir(&extracted_root) else {
+            return Vec::new();
+        };
+
+        let mut ids: Vec<String> = entries
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.path().join("model_metadata.json").exists())
+            .filter_map(|entry| {
+                entry
+                    .file_name()
+                    .into_string()
+                    .ok()
+                    .filter(|name| !name.starts_with('.'))
+            })
+            .collect();
+
+        ids.sort();
+        ids
+    }
+
     /// Ensures a `.xyb` bundle is extracted and returns the directory path.
     ///
     /// This is the **single source of truth** for bundle extraction.

@@ -317,6 +317,11 @@ fn main() -> Result<()> {
             ui::hint("  https://github.com/xybrid-ai/xybrid/issues/new?template=model-request.yml");
             std::process::exit(1);
         }
+
+        if find_offline_error(err).is_some() {
+            render_offline_error(err);
+            std::process::exit(1);
+        }
     }
 
     result
@@ -330,6 +335,52 @@ fn find_model_not_found(err: &anyhow::Error) -> Option<&str> {
         }
     }
     None
+}
+
+/// Walk the anyhow error chain looking for SdkError::Offline.
+///
+/// Returns the underlying offline-error message (e.g., "Failed to resolve model
+/// (DNS resolution failed)") so callers can tell whether the failure was a
+/// local unreachability issue rather than a registry-side problem.
+fn find_offline_error(err: &anyhow::Error) -> Option<&str> {
+    for cause in err.chain() {
+        if let Some(SdkError::Offline(msg)) = cause.downcast_ref::<SdkError>() {
+            return Some(msg.as_str());
+        }
+    }
+    None
+}
+
+/// Render the user-facing offline error with actionable hints.
+///
+/// Walks the anyhow chain to reconstruct the top-level context (e.g., "Failed
+/// to resolve model 'X' from registry") and pairs it with a friendly
+/// explanation plus a list of models that ARE available for offline use. The
+/// goal is to replace jargon like "Circuit breaker open" with something the
+/// user can actually act on.
+fn render_offline_error(err: &anyhow::Error) {
+    // The top-level anyhow message is the context we want (e.g., the
+    // model ID the user asked for). The Offline variant lives deeper in
+    // the chain and carries the concrete cause (DNS / connect refused).
+    ui::err(&format!("{}", err));
+    println!();
+    ui::hint("Can't reach the xybrid registry — looks like you're offline");
+    ui::hint("or the registry host is unreachable. Check your network");
+    ui::hint("connection and try again.");
+
+    // Show what the user can run right now without a network. If we can't
+    // load a registry client (shouldn't happen in practice) or the cache
+    // is empty, fall back to a simpler hint.
+    if let Ok(client) = xybrid_sdk::registry_client::RegistryClient::from_env() {
+        let cached = client.list_offline_models();
+        if !cached.is_empty() {
+            println!();
+            ui::hint(&format!("Models available offline ({}):", cached.len()));
+            for id in &cached {
+                ui::sub(id);
+            }
+        }
+    }
 }
 
 /// Configure the global log level based on CLI verbosity flags.

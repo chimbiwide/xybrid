@@ -769,6 +769,16 @@ impl RegistryClient {
         }
     }
 
+    /// List all model IDs that are currently available for offline use.
+    ///
+    /// These are models that have been downloaded and extracted on this machine.
+    /// Never touches the network. Useful for showing "what you can run right now"
+    /// in offline error messages and in `xybrid models list` when the registry
+    /// is unreachable.
+    pub fn list_offline_models(&self) -> Vec<String> {
+        self.cache.list_extracted_model_ids()
+    }
+
     /// Download a file with progress tracking and retry on connection failures.
     ///
     /// Note: Downloads use a separate retry mechanism because:
