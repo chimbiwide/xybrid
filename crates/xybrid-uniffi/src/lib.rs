@@ -81,6 +81,13 @@ impl From<SdkError> for XybridError {
             SdkError::NotLoaded => XybridError::NotLoaded,
             SdkError::ConfigError(s) => XybridError::ConfigError { message: s },
             SdkError::NetworkError(s) => XybridError::NetworkError { message: s },
+            // `SdkError::Offline` is a Rust-side refinement of NetworkError
+            // (see xybrid-sdk). We collapse it back to `NetworkError` at the
+            // UniFFI boundary so the Swift/Kotlin public API stays stable —
+            // adding a new variant here would be a breaking change to the
+            // generated sealed/enum hierarchies and needs to go through the
+            // spec-first API contract update in docs/sdk/api-surface.yaml.
+            SdkError::Offline(s) => XybridError::NetworkError { message: s },
             SdkError::IoError(e) => XybridError::IoError {
                 message: e.to_string(),
             },
