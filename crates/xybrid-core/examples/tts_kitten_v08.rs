@@ -38,17 +38,13 @@ fn parse_args() -> Args {
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
-            "--voice" | "-v" => {
-                if i + 1 < args.len() {
-                    voice_name = Some(args[i + 1].clone());
-                    i += 1;
-                }
+            "--voice" | "-v" if i + 1 < args.len() => {
+                voice_name = Some(args[i + 1].clone());
+                i += 1;
             }
-            "--speed" => {
-                if i + 1 < args.len() {
-                    speed = args[i + 1].parse::<f32>().ok();
-                    i += 1;
-                }
+            "--speed" if i + 1 < args.len() => {
+                speed = args[i + 1].parse::<f32>().ok();
+                i += 1;
             }
             "--list-voices" | "-l" => {
                 list_voices = true;

@@ -50,23 +50,17 @@ fn parse_args() -> Args {
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
-            "--voice" | "-v" => {
-                if i + 1 < args.len() {
-                    voice_id = Some(args[i + 1].clone());
-                    i += 1;
-                }
+            "--voice" | "-v" if i + 1 < args.len() => {
+                voice_id = Some(args[i + 1].clone());
+                i += 1;
             }
-            "--silence-tokens" | "-s" => {
-                if i + 1 < args.len() {
-                    silence_tokens = args[i + 1].parse::<u8>().ok();
-                    i += 1;
-                }
+            "--silence-tokens" | "-s" if i + 1 < args.len() => {
+                silence_tokens = args[i + 1].parse::<u8>().ok();
+                i += 1;
             }
-            "--speed" => {
-                if i + 1 < args.len() {
-                    speed = args[i + 1].parse::<f32>().ok();
-                    i += 1;
-                }
+            "--speed" if i + 1 < args.len() => {
+                speed = args[i + 1].parse::<f32>().ok();
+                i += 1;
             }
             "--long-text" => {
                 text = "The advances in artificial intelligence over the past decade have been nothing \
