@@ -150,11 +150,8 @@ enum TtsInputKind {
 /// - f32 with 1D shape [1] (or dynamic [N]) → Speed
 fn classify_tts_input(dtype: Option<TensorElementType>, shape: &[i64]) -> TtsInputKind {
     match dtype {
-        Some(TensorElementType::Int64) => {
-            // int64 with 2 dims where first is 1 (or dynamic) → token input
-            if shape.len() == 2 && (shape[0] == 1 || shape[0] == -1) {
-                return TtsInputKind::Tokens;
-            }
+        Some(TensorElementType::Int64) if shape.len() == 2 && (shape[0] == 1 || shape[0] == -1) => {
+            return TtsInputKind::Tokens;
         }
         Some(TensorElementType::Float32) => {
             if shape.len() == 2 && (shape[0] == 1 || shape[0] == -1) {
