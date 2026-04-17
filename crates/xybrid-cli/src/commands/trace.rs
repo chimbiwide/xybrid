@@ -102,7 +102,7 @@ pub(crate) fn find_latest_session() -> Result<Option<String>> {
         return Ok(None);
     }
 
-    sessions.sort_by(|a, b| b.1.cmp(&a.1));
+    sessions.sort_by_key(|s| std::cmp::Reverse(s.1));
     Ok(sessions.first().map(|(id, _)| id.clone()))
 }
 
@@ -555,7 +555,7 @@ fn list_sessions(traces_dir: &Path) -> Result<()> {
         return Ok(());
     }
 
-    sessions.sort_by(|a, b| b.1.cmp(&a.1));
+    sessions.sort_by_key(|s| std::cmp::Reverse(s.1));
 
     println!("📋 Available Sessions:");
     println!("{}", "=".repeat(60));

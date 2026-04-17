@@ -1930,14 +1930,8 @@ pub unsafe extern "C" fn xybrid_context_has_system(handle: *mut XybridContextHan
     }
 
     match XybridContextHandle::as_ref(handle) {
-        Some(data) => {
-            if data.context.system_envelope().is_some() {
-                1
-            } else {
-                0
-            }
-        }
-        None => 0,
+        Some(data) if data.context.system_envelope().is_some() => 1,
+        _ => 0,
     }
 }
 
@@ -2558,14 +2552,8 @@ pub unsafe extern "C" fn xybrid_model_supports_token_streaming(
     }
 
     match XybridModelHandle::as_ref(model) {
-        Some(state) => {
-            if state.model.supports_token_streaming() {
-                1
-            } else {
-                0
-            }
-        }
-        None => 0,
+        Some(state) if state.model.supports_token_streaming() => 1,
+        _ => 0,
     }
 }
 
@@ -2592,14 +2580,8 @@ pub unsafe extern "C" fn xybrid_model_has_voices(model: *mut XybridModelHandle) 
         return 0;
     }
     match XybridModelHandle::as_ref(model) {
-        Some(state) => {
-            if state.voices.is_some() {
-                1
-            } else {
-                0
-            }
-        }
-        None => 0,
+        Some(state) if state.voices.is_some() => 1,
+        _ => 0,
     }
 }
 
@@ -3117,14 +3099,8 @@ pub unsafe extern "C" fn xybrid_result_success(result: *mut XybridResultHandle) 
     }
 
     match XybridResultHandle::as_ref(result) {
-        Some(data) => {
-            if data.success {
-                1
-            } else {
-                0
-            }
-        }
-        None => 0,
+        Some(data) if data.success => 1,
+        _ => 0,
     }
 }
 
