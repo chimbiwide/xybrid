@@ -134,6 +134,32 @@ impl Default for LlamaCppBackend {
 }
 
 #[cfg(feature = "llm-llamacpp")]
+impl LlamaCppBackend {
+    /// Acquire the model + context under the context mutex and hand both
+    /// to `f`. Replaces three copies of the same five-line dance across
+    /// `generate`, `generate_raw`, and `generate_streaming`. The guard
+    /// is held for the duration of `f` — `LlamaContext` is non-`Sync`
+    /// and `llama_decode` mutates internal state, so serialization
+    /// across threads is required.
+    fn with_model_and_context<R, F>(&self, f: F) -> LlmResult<R>
+    where
+        F: FnOnce(&sys::LlamaModel, &sys::LlamaContext) -> LlmResult<R>,
+    {
+        let model = self.model.as_ref().ok_or_else(|| {
+            AdapterError::ModelNotLoaded("No model loaded. Call load() first.".to_string())
+        })?;
+        let ctx_guard = self
+            .context
+            .lock()
+            .map_err(|_| AdapterError::RuntimeError("Context mutex poisoned".to_string()))?;
+        let context = ctx_guard.as_ref().ok_or_else(|| {
+            AdapterError::ModelNotLoaded("No context. Call load() first.".to_string())
+        })?;
+        f(model, context)
+    }
+}
+
+#[cfg(feature = "llm-llamacpp")]
 impl LlmBackend for LlamaCppBackend {
     fn name(&self) -> &str {
         "llama-cpp"
@@ -226,184 +252,182 @@ impl LlmBackend for LlamaCppBackend {
         messages: &[ChatMessage],
         config: &GenerationConfig,
     ) -> LlmResult<GenerationOutput> {
-        let model = self.model.as_ref().ok_or_else(|| {
-            AdapterError::ModelNotLoaded("No model loaded. Call load() first.".to_string())
-        })?;
-        let ctx_guard = self
-            .context
-            .lock()
-            .map_err(|_| AdapterError::RuntimeError("Context mutex poisoned".to_string()))?;
-        let context = ctx_guard.as_ref().ok_or_else(|| {
-            AdapterError::ModelNotLoaded("No context. Call load() first.".to_string())
-        })?;
+        self.with_model_and_context(|model, context| {
+            // Clear KV cache to reset context state for new conversation
+            // This is essential when reusing the context across multiple queries
+            sys::llama_kv_cache_clear(context);
 
-        // Clear KV cache to reset context state for new conversation
-        // This is essential when reusing the context across multiple queries
-        sys::llama_kv_cache_clear(context);
+            // Format messages into prompt using chat template
+            let prompt = sys::llama_format_chat(model, messages)?;
 
-        // Format messages into prompt using chat template
-        let prompt = sys::llama_format_chat(model, messages)?;
+            // Tokenize with special token parsing enabled — the chat template contains
+            // special tokens like <|im_start|>, <end_of_turn>, etc. that must be
+            // recognized as their special token IDs, not as individual characters.
+            let tokens = sys::llama_tokenize_special(model, &prompt, true)?;
 
-        // Tokenize with special token parsing enabled — the chat template contains
-        // special tokens like <|im_start|>, <end_of_turn>, etc. that must be
-        // recognized as their special token IDs, not as individual characters.
-        let tokens = sys::llama_tokenize_special(model, &prompt, true)?;
+            // Validate: input tokens must fit within the context window with room to generate
+            let n_ctx = sys::llama_n_ctx(context);
+            if tokens.len() >= n_ctx {
+                return Err(AdapterError::InvalidInput(format!(
+                    "Input too long: {} tokens exceeds context window of {} tokens. \
+                     Reduce the prompt size or conversation history.",
+                    tokens.len(),
+                    n_ctx
+                )));
+            }
 
-        // Validate: input tokens must fit within the context window with room to generate
-        let n_ctx = sys::llama_n_ctx(context);
-        if tokens.len() >= n_ctx {
-            return Err(AdapterError::InvalidInput(format!(
-                "Input too long: {} tokens exceeds context window of {} tokens. \
-                 Reduce the prompt size or conversation history.",
-                tokens.len(),
-                n_ctx
-            )));
-        }
+            // Per-chunk timestamps capture the streaming cadence for TTFT +
+            // inter-token-latency telemetry. The closure is observation-only
+            // (no external emission) — generation still returns the full
+            // token vector like `llama_generate_with_stops` did. Keeps the
+            // non-streaming contract of this function intact.
+            let mut tel = StreamingTelemetry::new(tokens.len());
+            let (output_tokens, stopped_by_callback) = sys::llama_generate_streaming(
+                context,
+                model,
+                &tokens,
+                config.max_tokens,
+                config.temperature,
+                config.top_p,
+                config.min_p,
+                config.top_k,
+                config.repetition_penalty,
+                &config.stop_sequences,
+                |_token_id, _token_text| {
+                    tel.record_chunk();
+                    Ok(())
+                },
+            )?;
 
-        // Per-chunk timestamps capture the streaming cadence for TTFT +
-        // inter-token-latency telemetry. The closure is observation-only
-        // (no external emission) — generation still returns the full
-        // token vector like `llama_generate_with_stops` did. Keeps the
-        // non-streaming contract of this function intact.
-        let mut tel = StreamingTelemetry::new(tokens.len());
-        let (output_tokens, _stopped_by_callback) = sys::llama_generate_streaming(
-            context,
-            model,
-            &tokens,
-            config.max_tokens,
-            config.temperature,
-            config.top_p,
-            config.min_p,
-            config.top_k,
-            config.repetition_penalty,
-            &config.stop_sequences,
-            |_token_id, _token_text| {
-                tel.record_chunk();
-                Ok(())
-            },
-        )?;
+            // Finalize telemetry before the post-processing work below so
+            // `generation_time_ms` reflects pure generation wallclock and is
+            // not inflated by detokenization / stop-sequence scanning.
+            let fields = tel.finalize(output_tokens.len());
 
-        // Finalize telemetry before the post-processing work below so
-        // `generation_time_ms` reflects pure generation wallclock and is
-        // not inflated by detokenization / stop-sequence scanning.
-        let fields = tel.finalize(output_tokens.len());
+            // Log generated token count and last few tokens for debugging
+            log::debug!(
+                target: "xybrid_core",
+                "Generated {} tokens. Last 10: {:?}",
+                output_tokens.len(),
+                output_tokens.iter().rev().take(10).collect::<Vec<_>>()
+            );
 
-        // Log generated token count and last few tokens for debugging
-        log::debug!(
-            target: "xybrid_core",
-            "Generated {} tokens. Last 10: {:?}",
-            output_tokens.len(),
-            output_tokens.iter().rev().take(10).collect::<Vec<_>>()
-        );
+            // Decode tokens to text
+            let mut text = sys::llama_detokenize(model, &output_tokens)?;
 
-        // Decode tokens to text
-        let mut text = sys::llama_detokenize(model, &output_tokens)?;
+            // Debug: log the raw text and its bytes to understand encoding
+            log::debug!(target: "xybrid_core", "LLM raw output ({} chars): {:?}", text.len(), &text[..text.len().min(200)]);
+            log::debug!(target: "xybrid_core", "First 100 bytes: {:?}", text.as_bytes().iter().take(100).collect::<Vec<_>>());
 
-        // Debug: log the raw text and its bytes to understand encoding
-        log::debug!(target: "xybrid_core", "LLM raw output ({} chars): {:?}", text.len(), &text[..text.len().min(200)]);
-        log::debug!(target: "xybrid_core", "First 100 bytes: {:?}", text.as_bytes().iter().take(100).collect::<Vec<_>>());
+            // Stop-pattern truncation + think-tag stripping live in
+            // `streaming_postprocess`. The `*_BROKEN` patterns cover
+            // tokenizers that split the leading `<` off a chat-template
+            // marker — safe only for final-text cleanup, not streaming.
+            let final_stop_patterns = {
+                let mut extras: Vec<&str> = CHAT_STOP_PATTERNS.to_vec();
+                extras.extend_from_slice(CHAT_STOP_PATTERNS_BROKEN);
+                merge_stop_patterns(&config.stop_sequences, &extras)
+            };
+            log::debug!(target: "xybrid_core", "Searching for stop patterns: {:?}", final_stop_patterns);
+            let stopped_in_text = truncate_at_first_stop(&mut text, &final_stop_patterns);
+            let text = strip_thinking_tags(&text).trim().to_string();
+            // `stopped_by_callback` catches the C layer detecting a stop
+            // before the Rust post-scan would — e.g. the user-supplied
+            // stop sequences that the C layer sees first. Prior code
+            // silently dropped this signal and sometimes reported
+            // `length` for a clean stop.
+            let finish_reason = if stopped_in_text || stopped_by_callback {
+                "stop"
+            } else {
+                "length"
+            }
+            .to_string();
 
-        // Stop-pattern truncation + think-tag stripping live in
-        // `streaming_postprocess`. The `*_BROKEN` patterns cover
-        // tokenizers that split the leading `<` off a chat-template
-        // marker — safe only for final-text cleanup, not streaming.
-        let final_stop_patterns = {
-            let mut extras: Vec<&str> = CHAT_STOP_PATTERNS.to_vec();
-            extras.extend_from_slice(CHAT_STOP_PATTERNS_BROKEN);
-            merge_stop_patterns(&config.stop_sequences, &extras)
-        };
-        log::debug!(target: "xybrid_core", "Searching for stop patterns: {:?}", final_stop_patterns);
-        let stopped = truncate_at_first_stop(&mut text, &final_stop_patterns);
-        let text = strip_thinking_tags(&text).trim().to_string();
-        let finish_reason = if stopped { "stop" } else { "length" }.to_string();
-
-        // Telemetry derivation (TTFT, mean/p95 ITL, decode_tps, prefill_tps)
-        // lives in `llm_telemetry::StreamingTelemetry` and is shared with
-        // the mistral backend — llama.cpp's sys bindings don't expose
-        // `llama_perf_context`'s `t_p_eval_ms` / `t_eval_ms`, so the
-        // numbers are derived from per-chunk timestamps. See
-        // `compute_streaming_fields` for formula semantics.
-        Ok(GenerationOutput {
-            text,
-            tokens_generated: output_tokens.len(),
-            generation_time_ms: fields.generation_time_ms,
-            tokens_per_second: fields.tokens_per_second,
-            finish_reason,
-            ttft_ms: fields.ttft_ms,
-            mean_itl_ms: fields.mean_itl_ms,
-            p95_itl_ms: fields.p95_itl_ms,
-            emitted_chunks: fields.emitted_chunks,
-            inter_chunk_ms: fields.inter_chunk_ms,
-            decode_tps: fields.decode_tps,
-            prefill_tps: fields.prefill_tps,
+            // Telemetry derivation (TTFT, mean/p95 ITL, decode_tps, prefill_tps)
+            // lives in `llm_telemetry::StreamingTelemetry` and is shared with
+            // the mistral backend — llama.cpp's sys bindings don't expose
+            // `llama_perf_context`'s `t_p_eval_ms` / `t_eval_ms`, so the
+            // numbers are derived from per-chunk timestamps. See
+            // `compute_streaming_fields` for formula semantics.
+            Ok(GenerationOutput {
+                text,
+                tokens_generated: output_tokens.len(),
+                generation_time_ms: fields.generation_time_ms,
+                tokens_per_second: fields.tokens_per_second,
+                finish_reason,
+                ttft_ms: fields.ttft_ms,
+                mean_itl_ms: fields.mean_itl_ms,
+                p95_itl_ms: fields.p95_itl_ms,
+                emitted_chunks: fields.emitted_chunks,
+                inter_chunk_ms: fields.inter_chunk_ms,
+                decode_tps: fields.decode_tps,
+                prefill_tps: fields.prefill_tps,
+            })
         })
     }
 
     fn generate_raw(&self, prompt: &str, config: &GenerationConfig) -> LlmResult<GenerationOutput> {
-        let model = self.model.as_ref().ok_or_else(|| {
-            AdapterError::ModelNotLoaded("No model loaded. Call load() first.".to_string())
-        })?;
-        let ctx_guard = self
-            .context
-            .lock()
-            .map_err(|_| AdapterError::RuntimeError("Context mutex poisoned".to_string()))?;
-        let context = ctx_guard.as_ref().ok_or_else(|| {
-            AdapterError::ModelNotLoaded("No context. Call load() first.".to_string())
-        })?;
+        self.with_model_and_context(|model, context| {
+            sys::llama_kv_cache_clear(context);
 
-        sys::llama_kv_cache_clear(context);
+            // Tokenize directly — no chat template formatting.
+            let tokens = sys::llama_tokenize(model, prompt, true)?;
 
-        // Tokenize directly — no chat template formatting.
-        let tokens = sys::llama_tokenize(model, prompt, true)?;
+            let n_ctx = sys::llama_n_ctx(context);
+            if tokens.len() >= n_ctx {
+                return Err(AdapterError::InvalidInput(format!(
+                    "Input too long: {} tokens exceeds context window of {} tokens.",
+                    tokens.len(),
+                    n_ctx
+                )));
+            }
 
-        let n_ctx = sys::llama_n_ctx(context);
-        if tokens.len() >= n_ctx {
-            return Err(AdapterError::InvalidInput(format!(
-                "Input too long: {} tokens exceeds context window of {} tokens.",
-                tokens.len(),
-                n_ctx
-            )));
-        }
+            // Use the streaming-capable API with an observation-only
+            // callback so raw generation gets the same TTFT / ITL /
+            // decode-tps telemetry as `generate()`. Stop handling stays
+            // raw — only user-supplied sequences, no chat markers.
+            let mut tel = StreamingTelemetry::new(tokens.len());
+            let (output_tokens, stopped_by_callback) = sys::llama_generate_streaming(
+                context,
+                model,
+                &tokens,
+                config.max_tokens,
+                config.temperature,
+                config.top_p,
+                config.min_p,
+                config.top_k,
+                config.repetition_penalty,
+                &config.stop_sequences,
+                |_token_id, _token_text| {
+                    tel.record_chunk();
+                    Ok(())
+                },
+            )?;
+            let fields = tel.finalize(output_tokens.len());
 
-        let start = std::time::Instant::now();
+            let text = sys::llama_detokenize(model, &output_tokens)?;
+            let text = text.trim().to_string();
+            let finish_reason = if stopped_by_callback {
+                "stop"
+            } else {
+                "length"
+            }
+            .to_string();
 
-        let output_tokens = sys::llama_generate_with_stops(
-            context,
-            model,
-            &tokens,
-            config.max_tokens,
-            config.temperature,
-            config.top_p,
-            config.min_p,
-            config.top_k,
-            config.repetition_penalty,
-            &config.stop_sequences,
-        )?;
-
-        let elapsed = start.elapsed();
-        let text = sys::llama_detokenize(model, &output_tokens)?;
-        let text = text.trim().to_string();
-
-        let tokens_generated = output_tokens.len();
-        let tokens_per_second = if elapsed.as_secs_f32() > 0.0 {
-            tokens_generated as f32 / elapsed.as_secs_f32()
-        } else {
-            0.0
-        };
-
-        Ok(GenerationOutput {
-            text,
-            tokens_generated,
-            generation_time_ms: elapsed.as_millis() as u64,
-            tokens_per_second,
-            finish_reason: "length".to_string(),
-            ttft_ms: None,
-            mean_itl_ms: None,
-            p95_itl_ms: None,
-            emitted_chunks: None,
-            inter_chunk_ms: Vec::new(),
-            decode_tps: None,
-            prefill_tps: None,
+            Ok(GenerationOutput {
+                text,
+                tokens_generated: output_tokens.len(),
+                generation_time_ms: fields.generation_time_ms,
+                tokens_per_second: fields.tokens_per_second,
+                finish_reason,
+                ttft_ms: fields.ttft_ms,
+                mean_itl_ms: fields.mean_itl_ms,
+                p95_itl_ms: fields.p95_itl_ms,
+                emitted_chunks: fields.emitted_chunks,
+                inter_chunk_ms: fields.inter_chunk_ms,
+                decode_tps: fields.decode_tps,
+                prefill_tps: fields.prefill_tps,
+            })
         })
     }
 
@@ -416,137 +440,131 @@ impl LlmBackend for LlamaCppBackend {
         use crate::runtime_adapter::llm::PartialToken;
         let mut on_token = on_token;
 
-        let model = self.model.as_ref().ok_or_else(|| {
-            AdapterError::ModelNotLoaded("No model loaded. Call load() first.".to_string())
-        })?;
-        let ctx_guard = self
-            .context
-            .lock()
-            .map_err(|_| AdapterError::RuntimeError("Context mutex poisoned".to_string()))?;
-        let context = ctx_guard.as_ref().ok_or_else(|| {
-            AdapterError::ModelNotLoaded("No context. Call load() first.".to_string())
-        })?;
+        self.with_model_and_context(|model, context| {
+            // Clear KV cache to reset context state for new conversation
+            sys::llama_kv_cache_clear(context);
 
-        // Clear KV cache to reset context state for new conversation
-        sys::llama_kv_cache_clear(context);
+            // Format messages into prompt using chat template
+            let prompt = sys::llama_format_chat(model, messages)?;
 
-        // Format messages into prompt using chat template
-        let prompt = sys::llama_format_chat(model, messages)?;
+            // Tokenize with special token parsing — chat template contains special tokens
+            let tokens = sys::llama_tokenize_special(model, &prompt, true)?;
 
-        // Tokenize with special token parsing — chat template contains special tokens
-        let tokens = sys::llama_tokenize_special(model, &prompt, true)?;
+            // Validate: input tokens must fit within the context window with room to generate
+            let n_ctx = sys::llama_n_ctx(context);
+            if tokens.len() >= n_ctx {
+                return Err(AdapterError::InvalidInput(format!(
+                    "Input too long: {} tokens exceeds context window of {} tokens. \
+                     Reduce the prompt size or conversation history.",
+                    tokens.len(),
+                    n_ctx
+                )));
+            }
 
-        // Validate: input tokens must fit within the context window with room to generate
-        let n_ctx = sys::llama_n_ctx(context);
-        if tokens.len() >= n_ctx {
-            return Err(AdapterError::InvalidInput(format!(
-                "Input too long: {} tokens exceeds context window of {} tokens. \
-                 Reduce the prompt size or conversation history.",
-                tokens.len(),
-                n_ctx
-            )));
-        }
+            // Shared streaming state: telemetry recorder + text filter.
+            // The filter owns cumulative text, think-block state, stop-pattern
+            // detection, and safe-prefix buffering — this backend just feeds
+            // raw chunks in and emits whatever comes out. See
+            // `streaming_postprocess` for the contract.
+            //
+            // Stop patterns are cloned once so the filter can own them while
+            // the C layer and final-text cleanup keep a reference. The
+            // `_BROKEN` variants are intentionally excluded from streaming
+            // (they false-positive on legitimate text) — they only run in
+            // the final cleanup pass below.
+            let mut tel = StreamingTelemetry::new(tokens.len());
+            let stop_patterns = merge_stop_patterns(&config.stop_sequences, CHAT_STOP_PATTERNS);
+            let mut filter = StreamingTextFilter::new(stop_patterns.clone());
+            let mut token_index = 0usize;
 
-        // Shared streaming state: telemetry recorder + text filter.
-        // The filter owns cumulative text, think-block state, stop-pattern
-        // detection, and safe-prefix buffering — this backend just feeds
-        // raw chunks in and emits whatever comes out. See
-        // `streaming_postprocess` for the contract.
-        //
-        // Stop patterns are cloned once so the filter can own them while
-        // the C layer and final-text cleanup keep a reference. The
-        // `_BROKEN` variants are intentionally excluded from streaming
-        // (they false-positive on legitimate text) — they only run in
-        // the final cleanup pass below.
-        let mut tel = StreamingTelemetry::new(tokens.len());
-        let stop_patterns = merge_stop_patterns(&config.stop_sequences, CHAT_STOP_PATTERNS);
-        let mut filter = StreamingTextFilter::new(stop_patterns.clone());
-        let mut token_index = 0usize;
+            let (output_tokens, stopped_by_callback) = sys::llama_generate_streaming(
+                context,
+                model,
+                &tokens,
+                config.max_tokens,
+                config.temperature,
+                config.top_p,
+                config.min_p,
+                config.top_k,
+                config.repetition_penalty,
+                &stop_patterns, // C layer uses these for early stop / llama_vocab_is_eog
+                |token_id, token_text| {
+                    // Timestamp every C-layer callback, before any filtering —
+                    // the stream itself is what's being measured, not the
+                    // user-visible emission.
+                    tel.record_chunk();
 
-        let (output_tokens, _stopped_by_callback) = sys::llama_generate_streaming(
-            context,
-            model,
-            &tokens,
-            config.max_tokens,
-            config.temperature,
-            config.top_p,
-            config.min_p,
-            config.top_k,
-            config.repetition_penalty,
-            &stop_patterns, // C layer uses these for early stop / llama_vocab_is_eog
-            |token_id, token_text| {
-                // Timestamp every C-layer callback, before any filtering —
-                // the stream itself is what's being measured, not the
-                // user-visible emission.
-                tel.record_chunk();
+                    if let Some(safe_text) = filter.push(token_text) {
+                        let partial = PartialToken::new(
+                            safe_text,
+                            token_index,
+                            filter.cumulative_emitted().to_string(),
+                        )
+                        .with_token_id(token_id as i64);
+                        token_index += 1;
+                        on_token(partial)?;
+                    }
 
-                if let Some(safe_text) = filter.push(token_text) {
-                    let partial = PartialToken::new(
-                        safe_text,
-                        token_index,
-                        filter.cumulative_emitted().to_string(),
-                    )
-                    .with_token_id(token_id as i64);
-                    token_index += 1;
-                    on_token(partial)?;
-                }
+                    Ok(())
+                },
+            )?;
 
-                Ok(())
-            },
-        )?;
+            // Finalize telemetry before post-processing so `generation_time_ms`
+            // reflects only the generation loop, not detokenization or
+            // stop-pattern cleanup. Shared with `generate()` — see
+            // `compute_streaming_fields`.
+            let fields = tel.finalize(output_tokens.len());
 
-        // Finalize telemetry before post-processing so `generation_time_ms`
-        // reflects only the generation loop, not detokenization or
-        // stop-pattern cleanup. Shared with `generate()` — see
-        // `compute_streaming_fields`.
-        let fields = tel.finalize(output_tokens.len());
+            // Final-output cleanup: detokenize the full token vector (rather
+            // than using the filter's cumulative text) as a belt-and-braces
+            // guard against chunk-boundary UTF-8 edge cases, then run the
+            // same truncate / trim-partial / strip-think passes used by the
+            // non-streaming path. The `_BROKEN` fallback patterns are
+            // included here because this is final-text only — no streaming
+            // false-positive risk.
+            let final_patterns = {
+                let mut extras: Vec<&str> = CHAT_STOP_PATTERNS.to_vec();
+                extras.extend_from_slice(CHAT_STOP_PATTERNS_BROKEN);
+                merge_stop_patterns(&config.stop_sequences, &extras)
+            };
+            let mut text = sys::llama_detokenize(model, &output_tokens)?;
+            let stopped_full = truncate_at_first_stop(&mut text, &final_patterns);
+            let trimmed_partial = trim_partial_stop_suffix(&mut text, &final_patterns);
+            let text = strip_thinking_tags(&text).trim().to_string();
+            // `stopped_by_callback` is an independent signal from the C
+            // layer that a stop sequence was hit — previously dropped.
+            let finish_reason =
+                if filter.is_stopped() || stopped_full || trimmed_partial || stopped_by_callback {
+                    "stop".to_string()
+                } else {
+                    "length".to_string()
+                };
 
-        // Final-output cleanup: detokenize the full token vector (rather
-        // than using the filter's cumulative text) as a belt-and-braces
-        // guard against chunk-boundary UTF-8 edge cases, then run the
-        // same truncate / trim-partial / strip-think passes used by the
-        // non-streaming path. The `_BROKEN` fallback patterns are
-        // included here because this is final-text only — no streaming
-        // false-positive risk.
-        let final_patterns = {
-            let mut extras: Vec<&str> = CHAT_STOP_PATTERNS.to_vec();
-            extras.extend_from_slice(CHAT_STOP_PATTERNS_BROKEN);
-            merge_stop_patterns(&config.stop_sequences, &extras)
-        };
-        let mut text = sys::llama_detokenize(model, &output_tokens)?;
-        let stopped_full = truncate_at_first_stop(&mut text, &final_patterns);
-        let trimmed_partial = trim_partial_stop_suffix(&mut text, &final_patterns);
-        let text = strip_thinking_tags(&text).trim().to_string();
-        let finish_reason = if filter.is_stopped() || stopped_full || trimmed_partial {
-            "stop".to_string()
-        } else {
-            "length".to_string()
-        };
+            // Send final empty token with finish_reason — matches the
+            // pre-refactor contract so downstream consumers see a
+            // terminal signal. Guarded on `token_index > 0` to avoid
+            // emitting a stray terminal chunk when nothing was ever
+            // emitted (e.g. immediate stop).
+            if token_index > 0 {
+                let final_partial = PartialToken::new(String::new(), token_index, text.clone())
+                    .with_finish_reason(&finish_reason);
+                let _ = on_token(final_partial);
+            }
 
-        // Send final empty token with finish_reason — matches the
-        // pre-refactor contract so downstream consumers see a
-        // terminal signal. Guarded on `token_index > 0` to avoid
-        // emitting a stray terminal chunk when nothing was ever
-        // emitted (e.g. immediate stop).
-        if token_index > 0 {
-            let final_partial = PartialToken::new(String::new(), token_index, text.clone())
-                .with_finish_reason(&finish_reason);
-            let _ = on_token(final_partial);
-        }
-
-        Ok(GenerationOutput {
-            text,
-            tokens_generated: output_tokens.len(),
-            generation_time_ms: fields.generation_time_ms,
-            tokens_per_second: fields.tokens_per_second,
-            finish_reason,
-            ttft_ms: fields.ttft_ms,
-            mean_itl_ms: fields.mean_itl_ms,
-            p95_itl_ms: fields.p95_itl_ms,
-            emitted_chunks: fields.emitted_chunks,
-            inter_chunk_ms: fields.inter_chunk_ms,
-            decode_tps: fields.decode_tps,
-            prefill_tps: fields.prefill_tps,
+            Ok(GenerationOutput {
+                text,
+                tokens_generated: output_tokens.len(),
+                generation_time_ms: fields.generation_time_ms,
+                tokens_per_second: fields.tokens_per_second,
+                finish_reason,
+                ttft_ms: fields.ttft_ms,
+                mean_itl_ms: fields.mean_itl_ms,
+                p95_itl_ms: fields.p95_itl_ms,
+                emitted_chunks: fields.emitted_chunks,
+                inter_chunk_ms: fields.inter_chunk_ms,
+                decode_tps: fields.decode_tps,
+                prefill_tps: fields.prefill_tps,
+            })
         })
     }
 

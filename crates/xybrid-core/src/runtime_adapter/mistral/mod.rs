@@ -84,15 +84,25 @@ fn handle_response(
 ) -> Result<bool, AdapterError> {
     match response {
         Response::Chunk(chunk) => {
-            state.chunk_ts.push(ts);
-            if let Some(delta) = chunk
+            // Only record a timestamp for content-bearing chunks. The
+            // terminal chunk carries `usage` + `finish_reason` but
+            // typically has `delta.content == None` — treating it as a
+            // "chunk" for ITL purposes inflates `emitted_chunks` by one
+            // and skews the final inter-chunk gap to ~0 (since the
+            // producer emits the terminal right after the last token).
+            // Also acts as the fallback for `tokens_generated` via
+            // `tokens_reported.unwrap_or(chunk_ts.len())` — keeping it
+            // token-aligned matters when usage is missing.
+            let delta = chunk
                 .choices
                 .first()
-                .and_then(|c| c.delta.content.as_deref())
-            {
-                state.text.push_str(delta);
+                .and_then(|c| c.delta.content.as_deref());
+            if let Some(body) = delta.filter(|s| !s.is_empty()) {
+                state.chunk_ts.push(ts);
+                state.text.push_str(body);
             }
-            // Terminal chunk carries usage + finish_reason.
+            // Terminal chunk carries usage + finish_reason regardless
+            // of whether content is present.
             let chunk_fr = chunk.choices.first().and_then(|c| c.finish_reason.as_ref());
             if chunk.usage.is_some() || chunk_fr.is_some() {
                 state.saw_terminal = true;
@@ -117,8 +127,22 @@ fn handle_response(
             }
             Ok(true)
         }
-        Response::ModelError(msg, _partial) => {
-            Err(AdapterError::InferenceFailed(format!("model: {}", msg)))
+        Response::ModelError(msg, partial) => {
+            // mistralrs attaches the in-progress `ChatCompletionResponse`
+            // it was about to return when the error hit. Silently
+            // dropping it (the prior behavior) made "model errored
+            // after generating N tokens of X" debugging a lot harder.
+            // Preview the first 200 chars so the error stays readable.
+            let preview = partial
+                .choices
+                .first()
+                .and_then(|c| c.message.content.as_deref())
+                .map(|s| format!(" (partial: {:?})", &s[..s.len().min(200)]))
+                .unwrap_or_default();
+            Err(AdapterError::InferenceFailed(format!(
+                "model: {}{}",
+                msg, preview
+            )))
         }
         Response::InternalError(e) => {
             Err(AdapterError::InferenceFailed(format!("internal: {}", e)))
@@ -172,16 +196,34 @@ pub struct MistralBackend {
     /// and telemetry read an honest "unknown" rather than a value the
     /// runtime does not actually honor.
     effective_context_length: Option<usize>,
+    /// Tokio runtime used to drive mistralrs's async APIs from this
+    /// sync trait.
+    ///
+    /// Owned by the backend so we pay the worker-pool spawn cost once
+    /// (in `new()`) rather than per `load()` / `generate()` call.
+    ///
+    /// # Sync-only contract
+    ///
+    /// `LlmBackend` is a sync trait. Calling into this backend from
+    /// inside an already-running tokio runtime will panic at
+    /// `block_on` with *"Cannot block the current thread from within
+    /// a runtime."* That is a caller bug — wrap the call in
+    /// `tokio::task::spawn_blocking` from async contexts.
+    runtime: tokio::runtime::Runtime,
 }
 
 #[cfg(feature = "llm-mistral")]
 impl MistralBackend {
     /// Create a new MistralBackend.
     pub fn new() -> LlmResult<Self> {
+        let runtime = tokio::runtime::Runtime::new().map_err(|e| {
+            AdapterError::RuntimeError(format!("Failed to create tokio runtime: {}", e))
+        })?;
         Ok(Self {
             model: None,
             config: None,
             effective_context_length: None,
+            runtime,
         })
     }
 
@@ -275,11 +317,9 @@ impl LlmBackend for MistralBackend {
             (config.model_path.clone(), file)
         };
 
-        // Build the model using tokio runtime
-        let rt = tokio::runtime::Runtime::new()
-            .map_err(|e| AdapterError::RuntimeError(format!("Failed to create runtime: {}", e)))?;
-
-        let model = rt.block_on(async {
+        // Reuses the long-lived runtime held in the struct (see
+        // `MistralBackend.runtime` for the sync-only contract).
+        let model = self.runtime.block_on(async {
             let mut builder = GgufModelBuilder::new(&model_dir, vec![model_file]);
 
             // Apply chat template if provided
@@ -371,10 +411,7 @@ impl LlmBackend for MistralBackend {
         //     terminal chunk (sampling.rs:154,188-200).
         // We accept either signal (`Done` or a terminal chunk) via
         // `saw_terminal`; a stream that closes without either is an error.
-        let rt = tokio::runtime::Runtime::new()
-            .map_err(|e| AdapterError::RuntimeError(format!("Failed to create runtime: {}", e)))?;
-
-        let state = rt.block_on(async move {
+        let state = self.runtime.block_on(async move {
             let mut stream = model
                 .stream_chat_request(request)
                 .await
@@ -641,7 +678,11 @@ mod tests {
             .unwrap());
 
             assert_eq!(state.text, "Hello world");
-            assert_eq!(state.chunk_ts.len(), 4);
+            // Only content-bearing chunks record a timestamp — the
+            // terminal chunk has `delta.content == None` and is
+            // intentionally excluded from ITL math. Three delta
+            // chunks above → three timestamps.
+            assert_eq!(state.chunk_ts.len(), 3);
             assert!(state.saw_terminal);
             assert_eq!(state.tokens_reported, Some(3));
             assert_eq!(state.decode_tps_reported, Some(120.0));
@@ -651,6 +692,25 @@ mod tests {
             // TTFT math — first timestamp relative to start.
             let ttft = state.chunk_ts[0].duration_since(start).as_millis() as u64;
             assert_eq!(ttft, 40);
+        }
+
+        /// A terminal-only stream (usage + finish_reason with no body)
+        /// must still register `saw_terminal` but leave `chunk_ts`
+        /// empty — otherwise ITL over one synthetic timestamp would
+        /// produce garbage and `tokens_generated` would fall back to
+        /// `1` instead of honoring `tokens_reported`.
+        #[test]
+        fn terminal_only_chunk_does_not_inflate_chunk_ts() {
+            let mut state = StreamState::new();
+            handle_response(
+                terminal_chunk(5, 180.0, 90.0, "stop"),
+                &mut state,
+                Instant::now(),
+            )
+            .unwrap();
+            assert!(state.saw_terminal);
+            assert_eq!(state.chunk_ts.len(), 0);
+            assert_eq!(state.tokens_reported, Some(5));
         }
 
         /// `avg_*_tok_per_sec == 0.0` reads as "below timing resolution"
@@ -735,6 +795,47 @@ mod tests {
             )
             .unwrap_err();
             assert!(matches!(err, AdapterError::InvalidInput(_)));
+        }
+
+        /// `ModelError`'s partial response was previously discarded,
+        /// which hid "got N tokens then crashed" context during
+        /// debugging. It should now appear as a preview in the error
+        /// message.
+        #[test]
+        fn model_error_preserves_partial_text_in_message() {
+            use mistralrs::{ChatCompletionResponse, Choice, ResponseMessage};
+            let partial = ChatCompletionResponse {
+                id: "test".into(),
+                choices: vec![Choice {
+                    finish_reason: "error".into(),
+                    index: 0,
+                    message: ResponseMessage {
+                        content: Some("Hello wor".into()),
+                        role: "assistant".into(),
+                        tool_calls: None,
+                        reasoning_content: None,
+                    },
+                    logprobs: None,
+                }],
+                created: 0,
+                model: "test-model".into(),
+                system_fingerprint: String::new(),
+                object: "chat.completion".into(),
+                usage: usage(2, 0.0, 0.0),
+            };
+            let mut state = StreamState::new();
+            let err = handle_response(
+                Response::ModelError("kernel died".into(), partial),
+                &mut state,
+                Instant::now(),
+            )
+            .unwrap_err();
+            let msg = match err {
+                AdapterError::InferenceFailed(m) => m,
+                other => panic!("expected InferenceFailed, got {:?}", other),
+            };
+            assert!(msg.contains("kernel died"), "got: {msg}");
+            assert!(msg.contains("Hello wor"), "partial preview missing: {msg}");
         }
 
         /// `nonzero` filter behaves as the rest of the pipeline expects.
