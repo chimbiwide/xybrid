@@ -343,4 +343,60 @@ mod tests {
         // After closing </think>, emission resumes on next chunk.
         assert_eq!(f.push("answer"), Some("answer".to_string()));
     }
+
+    /// An unclosed `<think>` must never leak its body upward. The final
+    /// cleanup's `strip_thinking_tags` would also handle this, but the
+    /// streaming contract promises the user never sees reasoning text —
+    /// so the filter must withhold it even if `</think>` never arrives.
+    #[test]
+    fn streaming_filter_unclosed_think_stays_suppressed() {
+        let mut f = StreamingTextFilter::new(vec![]);
+        assert_eq!(f.push("<think>"), None);
+        assert_eq!(f.push("still reasoning"), None);
+        assert_eq!(f.push(" forever"), None);
+        assert!(!f.is_stopped());
+        assert_eq!(f.cumulative_emitted(), "");
+    }
+
+    /// `<think>` can arrive mid-chunk with user-visible text preceding
+    /// it in the same chunk (e.g. a model that emits
+    /// `scratch<think>hidden</think>final`). The `push` return stream
+    /// correctly withholds `scratch` — it was never safe to emit
+    /// before the block opened, so the consumer never sees it as a
+    /// delta.
+    ///
+    /// Known quirk: `cumulative_emitted()` still reports `"scratchfinal"`
+    /// here, because it returns `cumulative_text[..last_emitted_len]`
+    /// and `strip_thinking_tags` only removes the `<think>...</think>`
+    /// span — the pre-block bytes remain in the buffer. The emitted
+    /// **delta** stream is what consumers actually see, and that is
+    /// correct. If a future change tightens `cumulative_emitted()` to
+    /// reflect only actually-emitted bytes, this assertion should
+    /// change to `"final"`.
+    #[test]
+    fn streaming_filter_think_block_swallows_preceding_unemitted_text() {
+        let mut f = StreamingTextFilter::new(vec![]);
+        assert_eq!(f.push("scratch<think>"), None);
+        assert_eq!(f.push("hidden</think>"), None);
+        // The consumer-visible delta stream is just `final` — `scratch`
+        // was never emitted.
+        assert_eq!(f.push("final"), Some("final".to_string()));
+        // Documents the cumulative_emitted() leakage described above.
+        assert_eq!(f.cumulative_emitted(), "scratchfinal");
+    }
+
+    /// Regression guard: stop-pattern prefix math computes byte offsets
+    /// like `text.len() - pattern.len()`. With multi-byte UTF-8 content
+    /// in the cumulative buffer, a naive implementation could slice on
+    /// a non-char boundary and panic. Reaching the assertion without a
+    /// panic IS the assertion.
+    #[test]
+    fn streaming_filter_utf8_text_does_not_panic_on_ascii_stop_patterns() {
+        let mut f = StreamingTextFilter::new(vec!["<|im_end|>".to_string()]);
+        let _ = f.push("héllo ");
+        let _ = f.push("wörld");
+        let _ = f.push("<|im_");
+        let _ = f.push("end|>");
+        assert!(f.is_stopped());
+    }
 }
