@@ -13,12 +13,126 @@ use crate::ir::MessageRole;
 use crate::runtime_adapter::llm::{
     ChatMessage, GenerationConfig, GenerationOutput, LlmBackend, LlmConfig, LlmResult,
 };
+#[cfg(feature = "llm-mistral")]
+use crate::runtime_adapter::llm_telemetry::compute_streaming_fields;
 use crate::runtime_adapter::AdapterError;
 
 #[cfg(feature = "llm-mistral")]
 use mistralrs::{
-    GgufModelBuilder, Model, PagedAttentionMetaBuilder, RequestBuilder, TextMessageRole,
+    GgufModelBuilder, Model, PagedAttentionMetaBuilder, RequestBuilder, Response, TextMessageRole,
 };
+
+/// 0.0 is how mistralrs reports "below timing resolution" (e.g. very short
+/// prompts on fast hardware). Treat it as `None` so dashboards don't show a
+/// misleading 0 tok/s.
+#[cfg(feature = "llm-mistral")]
+fn nonzero(v: f32) -> Option<f32> {
+    if v > 0.0 {
+        Some(v)
+    } else {
+        None
+    }
+}
+
+/// Accumulated state for the streaming response consumer. Kept pure-data so
+/// [`handle_response`] can be tested sequentially without an async runtime
+/// or the mistralrs `Stream<'_>` wrapper.
+#[cfg(feature = "llm-mistral")]
+struct StreamState {
+    text: String,
+    finish_reason: String,
+    tokens_reported: Option<usize>,
+    chunk_ts: Vec<std::time::Instant>,
+    decode_tps_reported: Option<f32>,
+    prefill_tps_reported: Option<f32>,
+    saw_terminal: bool,
+}
+
+#[cfg(feature = "llm-mistral")]
+impl StreamState {
+    fn new() -> Self {
+        Self {
+            text: String::new(),
+            finish_reason: String::from("unknown"),
+            tokens_reported: None,
+            chunk_ts: Vec::new(),
+            decode_tps_reported: None,
+            prefill_tps_reported: None,
+            saw_terminal: false,
+        }
+    }
+}
+
+/// Pure state-machine step over a single mistralrs [`Response`]. Returns
+/// `Ok(true)` when the caller should stop reading (terminal `Response::Done`
+/// only — terminal `Response::Chunk` sets `saw_terminal` but doesn't stop
+/// the stream, since the producer closes the channel naturally after).
+///
+/// Invariants documented at call site:
+/// - `ts` is the moment the response was observed (not the moment the
+///   function runs), so tests can inject synthetic timestamps.
+/// - On `is_streaming=true`, mistralrs signals completion on the **last**
+///   `Response::Chunk` by populating `usage` and `finish_reason`
+///   (mistralrs-core sequence.rs:1519-1527 + sampling.rs:154,188-200).
+///   The `Response::Done` arm is kept defensively for non-streaming paths
+///   and any future mistralrs version that emits it.
+#[cfg(feature = "llm-mistral")]
+fn handle_response(
+    response: Response,
+    state: &mut StreamState,
+    ts: std::time::Instant,
+) -> Result<bool, AdapterError> {
+    match response {
+        Response::Chunk(chunk) => {
+            state.chunk_ts.push(ts);
+            if let Some(delta) = chunk
+                .choices
+                .first()
+                .and_then(|c| c.delta.content.as_deref())
+            {
+                state.text.push_str(delta);
+            }
+            // Terminal chunk carries usage + finish_reason.
+            let chunk_fr = chunk.choices.first().and_then(|c| c.finish_reason.as_ref());
+            if chunk.usage.is_some() || chunk_fr.is_some() {
+                state.saw_terminal = true;
+                if let Some(u) = chunk.usage.as_ref() {
+                    state.tokens_reported = Some(u.completion_tokens);
+                    state.decode_tps_reported = nonzero(u.avg_compl_tok_per_sec);
+                    state.prefill_tps_reported = nonzero(u.avg_prompt_tok_per_sec);
+                }
+                if let Some(fr) = chunk_fr {
+                    state.finish_reason = fr.clone();
+                }
+            }
+            Ok(false)
+        }
+        Response::Done(final_resp) => {
+            state.saw_terminal = true;
+            state.tokens_reported = Some(final_resp.usage.completion_tokens);
+            state.decode_tps_reported = nonzero(final_resp.usage.avg_compl_tok_per_sec);
+            state.prefill_tps_reported = nonzero(final_resp.usage.avg_prompt_tok_per_sec);
+            if let Some(choice) = final_resp.choices.first() {
+                state.finish_reason = choice.finish_reason.clone();
+            }
+            Ok(true)
+        }
+        Response::ModelError(msg, _partial) => {
+            Err(AdapterError::InferenceFailed(format!("model: {}", msg)))
+        }
+        Response::InternalError(e) => {
+            Err(AdapterError::InferenceFailed(format!("internal: {}", e)))
+        }
+        Response::ValidationError(e) => {
+            Err(AdapterError::InvalidInput(format!("validation: {}", e)))
+        }
+        // Streaming chat path should never produce these (completion /
+        // image / speech / raw / embeddings).
+        _ => Err(AdapterError::InferenceFailed(
+            "unexpected stream response variant for chat".to_string(),
+        )),
+    }
+}
 
 /// MistralBackend - LLM inference using mistral.rs.
 ///
@@ -49,6 +163,15 @@ pub struct MistralBackend {
     model: Option<Model>,
     /// Current configuration
     config: Option<LlmConfig>,
+    /// Context length actually in effect on the backend.
+    ///
+    /// The `GgufModelBuilder` in mistralrs reads context length from the
+    /// GGUF file and does not expose a runtime override. Callers that set
+    /// `LlmConfig::context_length` to a non-default value see that value
+    /// NOT reach the backend. We report `None` in that case so callers
+    /// and telemetry read an honest "unknown" rather than a value the
+    /// runtime does not actually honor.
+    effective_context_length: Option<usize>,
 }
 
 #[cfg(feature = "llm-mistral")]
@@ -58,6 +181,7 @@ impl MistralBackend {
         Ok(Self {
             model: None,
             config: None,
+            effective_context_length: None,
         })
     }
 
@@ -95,6 +219,27 @@ impl LlmBackend for MistralBackend {
         if !model_path.exists() {
             return Err(AdapterError::ModelNotFound(config.model_path.clone()));
         }
+
+        // Honest-config contract: warn on load-time fields the backend does
+        // not actually wire into mistralrs, and report them as None from the
+        // trait accessors rather than echoing the requested value.
+        // 4096 matches `LlmConfig::default_context_length()` (types.rs).
+        const DEFAULT_CONTEXT_LENGTH: usize = 4096;
+        if config.context_length != DEFAULT_CONTEXT_LENGTH {
+            log::warn!(
+                "LlmConfig.context_length={} is not wired to the mistralrs GGUF backend; \
+                 requested value ignored. Context length is derived from the GGUF file.",
+                config.context_length
+            );
+        }
+        if config.gpu_layers != 0 {
+            log::warn!(
+                "LlmConfig.gpu_layers={} is not wired to mistralrs; build with the \
+                 appropriate feature flag (llm-mistral-metal/llm-mistral-cuda) instead.",
+                config.gpu_layers
+            );
+        }
+        self.effective_context_length = None;
 
         // Determine directory and filename
         let (model_dir, model_file) = if model_path.is_file() {
@@ -147,13 +292,14 @@ impl LlmBackend for MistralBackend {
                 builder = builder.with_logging();
             }
 
-            // Enable paged attention if requested
+            // Enable paged attention if requested. mistralrs 0.8 takes the
+            // config by value (the closure form was 0.7). `build()` still
+            // returns Result, so keep the error mapping on that call.
             if config.paged_attention {
-                builder = builder
-                    .with_paged_attn(|| PagedAttentionMetaBuilder::default().build())
-                    .map_err(|e| {
-                        AdapterError::RuntimeError(format!("Paged attention setup failed: {}", e))
-                    })?;
+                let paged_cfg = PagedAttentionMetaBuilder::default().build().map_err(|e| {
+                    AdapterError::RuntimeError(format!("Paged attention setup failed: {}", e))
+                })?;
+                builder = builder.with_paged_attn(paged_cfg);
             }
 
             builder
@@ -181,7 +327,7 @@ impl LlmBackend for MistralBackend {
     fn generate(
         &self,
         messages: &[ChatMessage],
-        _config: &GenerationConfig,
+        config: &GenerationConfig,
     ) -> LlmResult<GenerationOutput> {
         let model = self.model.as_ref().ok_or_else(|| {
             AdapterError::ModelNotLoaded("No model loaded. Call load() first.".to_string())
@@ -194,49 +340,99 @@ impl LlmBackend for MistralBackend {
             request = request.add_message(Self::convert_role(&msg.role), &msg.content);
         }
 
+        // Deterministic-by-default: when the caller has not asked for
+        // sampling (`temperature <= 0.0`), use mistralrs's
+        // `set_deterministic_sampler()` so local inference is reproducible.
+        // `max_tokens` still applies in the deterministic path; sampling
+        // knobs are only set when requested.
+        request = if config.temperature <= 0.0 {
+            request
+                .set_deterministic_sampler()
+                .set_sampler_max_len(config.max_tokens)
+        } else {
+            request
+                .set_sampler_temperature(config.temperature as f64)
+                .set_sampler_topp(config.top_p as f64)
+                .set_sampler_topk(config.top_k)
+                .set_sampler_max_len(config.max_tokens)
+        };
+
         let start = std::time::Instant::now();
 
-        // Run inference
+        // Run streaming inference. We measure per-chunk timings so we can
+        // report TTFT (time to first emitted chunk) and inter-chunk latency
+        // summaries.
+        //
+        // On `is_streaming=true`, mistralrs signals completion via the
+        // **last `Response::Chunk`** (not `Response::Done`):
+        //   - `ChatCompletionChunkResponse.usage: Option<Usage>` is `Some(..)`
+        //     only on the terminal chunk (sequence.rs:1519-1527).
+        //   - `ChunkChoice.finish_reason: Option<String>` is set only on the
+        //     terminal chunk (sampling.rs:154,188-200).
+        // We accept either signal (`Done` or a terminal chunk) via
+        // `saw_terminal`; a stream that closes without either is an error.
         let rt = tokio::runtime::Runtime::new()
             .map_err(|e| AdapterError::RuntimeError(format!("Failed to create runtime: {}", e)))?;
 
-        let response = rt.block_on(async {
-            model
-                .send_chat_request(request)
+        let state = rt.block_on(async move {
+            let mut stream = model
+                .stream_chat_request(request)
                 .await
-                .map_err(|e| AdapterError::InferenceFailed(format!("Generation failed: {}", e)))
+                .map_err(|e| AdapterError::InferenceFailed(format!("stream init: {}", e)))?;
+
+            let mut state = StreamState::new();
+            while let Some(response) = stream.next().await {
+                let done = handle_response(response, &mut state, std::time::Instant::now())?;
+                if done {
+                    break;
+                }
+            }
+            if !state.saw_terminal {
+                return Err(AdapterError::InferenceFailed(
+                    "stream closed before terminal chunk (no usage or finish_reason)".to_string(),
+                ));
+            }
+            Ok::<_, AdapterError>(state)
         })?;
 
-        let elapsed = start.elapsed();
+        let StreamState {
+            text,
+            finish_reason,
+            tokens_reported,
+            chunk_ts,
+            decode_tps_reported,
+            prefill_tps_reported,
+            ..
+        } = state;
 
-        // Extract text from response
-        let text = response
-            .choices
-            .first()
-            .and_then(|c| c.message.content.as_ref())
-            .map(|s| s.to_string())
-            .unwrap_or_default();
+        // `saw_terminal` in the async block above guarantees we had a
+        // usage-bearing terminal chunk; if it was absent despite terminal
+        // signals, fall back to chunk count so downstream metrics don't NaN.
+        let tokens_generated = tokens_reported.unwrap_or(chunk_ts.len());
 
-        let finish_reason = response
-            .choices
-            .first()
-            .map(|c| c.finish_reason.to_string())
-            .unwrap_or_else(|| "unknown".to_string());
-
-        let tokens_generated = response.usage.completion_tokens;
-
-        let tokens_per_second = if elapsed.as_secs_f32() > 0.0 {
-            tokens_generated as f32 / elapsed.as_secs_f32()
-        } else {
-            0.0
-        };
+        // Shared telemetry derivation (TTFT, mean/p95 ITL, tokens_per_second).
+        // `prompt_token_count = 0` because mistralrs tokenizes internally
+        // and reports prefill_tps directly via `Usage.avg_prompt_tok_per_sec`
+        // — we override the (always-None) derived value with the engine
+        // number below via `.or()`.
+        let fields = compute_streaming_fields(start, &chunk_ts, 0, tokens_generated);
 
         Ok(GenerationOutput {
             text,
             tokens_generated,
-            generation_time_ms: elapsed.as_millis() as u64,
-            tokens_per_second,
+            generation_time_ms: fields.generation_time_ms,
+            tokens_per_second: fields.tokens_per_second,
             finish_reason,
+            ttft_ms: fields.ttft_ms,
+            mean_itl_ms: fields.mean_itl_ms,
+            p95_itl_ms: fields.p95_itl_ms,
+            emitted_chunks: fields.emitted_chunks,
+            inter_chunk_ms: fields.inter_chunk_ms,
+            // Engine-reported values win when present; derived values
+            // (decode_tps from ITL, prefill_tps = None since we passed 0
+            // prompt tokens) are the fallback for any future code path.
+            decode_tps: decode_tps_reported.or(fields.decode_tps),
+            prefill_tps: prefill_tps_reported.or(fields.prefill_tps),
         })
     }
 
@@ -260,7 +456,10 @@ impl LlmBackend for MistralBackend {
     }
 
     fn context_length(&self) -> Option<usize> {
-        self.config.as_ref().map(|c| c.context_length)
+        // Honest: we only report a context length when the backend actually
+        // applies it. Today mistralrs derives context from the GGUF, which
+        // we don't read, so this stays `None`. See `load()` for the contract.
+        self.effective_context_length
     }
 }
 
@@ -322,5 +521,228 @@ impl LlmBackend for MistralBackend {
         Err(AdapterError::RuntimeError(
             "llm-mistral feature not enabled".to_string(),
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // Mock-stream tests for `handle_response` / `StreamState`.
+    //
+    // These exercise the pure state machine that `generate()` drives
+    // with real mistralrs responses. They reproduce the Codex P1
+    // regression from the prior review: the terminal `Response::Chunk`
+    // must populate `finish_reason` and `usage`, since mistralrs under
+    // `is_streaming=true` does not emit `Response::Done`.
+    //
+    // Telemetry math (itl_stats, streaming field derivation) is tested
+    // in `runtime_adapter::llm_telemetry` — no point repeating it here.
+
+    #[cfg(feature = "llm-mistral")]
+    mod mock_stream {
+        use super::super::{handle_response, nonzero, StreamState};
+        use crate::runtime_adapter::AdapterError;
+        use mistralrs::{ChatCompletionChunkResponse, ChunkChoice, Delta, Response, Usage};
+        use std::time::{Duration, Instant};
+
+        fn usage(completion_tokens: usize, avg_prompt: f32, avg_compl: f32) -> Usage {
+            Usage {
+                completion_tokens,
+                prompt_tokens: 16,
+                total_tokens: 16 + completion_tokens,
+                avg_tok_per_sec: (avg_prompt + avg_compl) / 2.0,
+                avg_prompt_tok_per_sec: avg_prompt,
+                avg_compl_tok_per_sec: avg_compl,
+                total_time_sec: 1.0,
+                total_prompt_time_sec: 0.1,
+                total_completion_time_sec: 0.9,
+            }
+        }
+
+        fn delta_chunk(content: &str) -> Response {
+            Response::Chunk(ChatCompletionChunkResponse {
+                id: "test".into(),
+                choices: vec![ChunkChoice {
+                    finish_reason: None,
+                    index: 0,
+                    delta: Delta {
+                        content: Some(content.into()),
+                        role: "assistant".into(),
+                        tool_calls: None,
+                        reasoning_content: None,
+                    },
+                    logprobs: None,
+                }],
+                created: 0,
+                model: "test-model".into(),
+                system_fingerprint: String::new(),
+                object: "chat.completion.chunk".into(),
+                usage: None,
+            })
+        }
+
+        fn terminal_chunk(
+            completion_tokens: usize,
+            avg_prompt: f32,
+            avg_compl: f32,
+            finish_reason: &str,
+        ) -> Response {
+            Response::Chunk(ChatCompletionChunkResponse {
+                id: "test".into(),
+                choices: vec![ChunkChoice {
+                    finish_reason: Some(finish_reason.into()),
+                    index: 0,
+                    delta: Delta {
+                        content: None,
+                        role: "assistant".into(),
+                        tool_calls: None,
+                        reasoning_content: None,
+                    },
+                    logprobs: None,
+                }],
+                created: 0,
+                model: "test-model".into(),
+                system_fingerprint: String::new(),
+                object: "chat.completion.chunk".into(),
+                usage: Some(usage(completion_tokens, avg_prompt, avg_compl)),
+            })
+        }
+
+        /// Happy path: prefix chunks accumulate text, terminal chunk
+        /// populates TTFT-comparable state, usage + finish_reason.
+        #[test]
+        fn happy_path_populates_all_fields() {
+            let start = Instant::now();
+            let mut state = StreamState::new();
+
+            assert!(!handle_response(
+                delta_chunk("Hel"),
+                &mut state,
+                start + Duration::from_millis(40)
+            )
+            .unwrap());
+            assert!(!handle_response(
+                delta_chunk("lo"),
+                &mut state,
+                start + Duration::from_millis(55)
+            )
+            .unwrap());
+            assert!(!handle_response(
+                delta_chunk(" world"),
+                &mut state,
+                start + Duration::from_millis(70)
+            )
+            .unwrap());
+            // Terminal chunk (no body content, finish_reason + usage).
+            assert!(!handle_response(
+                terminal_chunk(3, 250.0, 120.0, "stop"),
+                &mut state,
+                start + Duration::from_millis(85),
+            )
+            .unwrap());
+
+            assert_eq!(state.text, "Hello world");
+            assert_eq!(state.chunk_ts.len(), 4);
+            assert!(state.saw_terminal);
+            assert_eq!(state.tokens_reported, Some(3));
+            assert_eq!(state.decode_tps_reported, Some(120.0));
+            assert_eq!(state.prefill_tps_reported, Some(250.0));
+            assert_eq!(state.finish_reason, "stop");
+
+            // TTFT math — first timestamp relative to start.
+            let ttft = state.chunk_ts[0].duration_since(start).as_millis() as u64;
+            assert_eq!(ttft, 40);
+        }
+
+        /// `avg_*_tok_per_sec == 0.0` reads as "below timing resolution"
+        /// and must collapse to None at the field boundary.
+        #[test]
+        fn zero_tps_values_collapse_to_none() {
+            let mut state = StreamState::new();
+            handle_response(
+                terminal_chunk(1, 0.0, 0.0, "stop"),
+                &mut state,
+                Instant::now(),
+            )
+            .unwrap();
+
+            assert!(state.saw_terminal);
+            assert_eq!(state.decode_tps_reported, None);
+            assert_eq!(state.prefill_tps_reported, None);
+        }
+
+        /// If no terminal chunk is ever seen, the `saw_terminal` guard in
+        /// `generate()` converts that into `AdapterError::InferenceFailed`.
+        /// The `handle_response` layer's job is to leave `saw_terminal`
+        /// false; the error is raised by the caller.
+        #[test]
+        fn stream_without_terminal_leaves_saw_terminal_false() {
+            let mut state = StreamState::new();
+            handle_response(delta_chunk("Partial"), &mut state, Instant::now()).unwrap();
+            handle_response(delta_chunk(" response"), &mut state, Instant::now()).unwrap();
+
+            assert!(!state.saw_terminal);
+            assert_eq!(state.text, "Partial response");
+            assert_eq!(state.tokens_reported, None);
+            assert_eq!(state.finish_reason, "unknown");
+        }
+
+        /// `Response::Done` (not normally emitted on streaming path, kept
+        /// for robustness) also populates state and returns `true` to stop.
+        #[test]
+        fn done_response_populates_and_stops() {
+            use mistralrs::{ChatCompletionResponse, Choice, ResponseMessage};
+            let mut state = StreamState::new();
+            let final_resp = ChatCompletionResponse {
+                id: "test".into(),
+                choices: vec![Choice {
+                    finish_reason: "length".into(),
+                    index: 0,
+                    message: ResponseMessage {
+                        content: Some("done body".into()),
+                        role: "assistant".into(),
+                        tool_calls: None,
+                        reasoning_content: None,
+                    },
+                    logprobs: None,
+                }],
+                created: 0,
+                model: "test-model".into(),
+                system_fingerprint: String::new(),
+                object: "chat.completion".into(),
+                usage: usage(42, 180.0, 95.0),
+            };
+            let stop =
+                handle_response(Response::Done(final_resp), &mut state, Instant::now()).unwrap();
+            assert!(
+                stop,
+                "Response::Done must return true so the outer loop breaks"
+            );
+            assert!(state.saw_terminal);
+            assert_eq!(state.tokens_reported, Some(42));
+            assert_eq!(state.decode_tps_reported, Some(95.0));
+            assert_eq!(state.prefill_tps_reported, Some(180.0));
+            assert_eq!(state.finish_reason, "length");
+        }
+
+        /// Error variants propagate as `AdapterError`.
+        #[test]
+        fn error_variants_produce_adapter_error() {
+            let mut state = StreamState::new();
+            let err = handle_response(
+                Response::ValidationError("bad request".to_string().into()),
+                &mut state,
+                Instant::now(),
+            )
+            .unwrap_err();
+            assert!(matches!(err, AdapterError::InvalidInput(_)));
+        }
+
+        /// `nonzero` filter behaves as the rest of the pipeline expects.
+        #[test]
+        fn nonzero_filter() {
+            assert_eq!(nonzero(0.0), None);
+            assert_eq!(nonzero(-1.0), None);
+            assert_eq!(nonzero(42.5), Some(42.5));
+        }
     }
 }
