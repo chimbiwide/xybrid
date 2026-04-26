@@ -136,6 +136,12 @@ compile_error!(
     - For other platforms: Use `ort-download` (CPU only)"
 );
 
+/// Version of the `xybrid-core` crate, sourced from Cargo metadata at compile time.
+///
+/// Re-exported by `xybrid-sdk` so registry telemetry headers can report the
+/// runtime core version without a parallel constant.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 // ============================================================================
 // Prelude - Common imports for convenience
 // ============================================================================
@@ -198,6 +204,9 @@ pub mod template_executor {
 /// Cache provider abstraction for model availability checks.
 /// Allows Core to check cache without depending on SDK.
 pub mod cache_provider;
+
+/// Runtime feature-flag introspection (which backends were compiled in).
+pub mod features;
 
 // ============================================================================
 // Data Types & Intermediate Representation
