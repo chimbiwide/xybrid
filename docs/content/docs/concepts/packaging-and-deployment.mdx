@@ -1,26 +1,24 @@
 ---
 title: Packaging & Deployment
-description: Bundle creation and registry publishing
+description: Bundle creation and distribution
 ---
 
-Package models into distributable `.xyb` bundles and publish them to registries.
+Package models into distributable `.xyb` bundles.
 
 ## Overview
 
-The deployment workflow:
+The packaging workflow:
 
 ```mermaid
 flowchart LR
-    A["Model Files"] --> B["Pack"]
+    A["Model Files"] --> B["xybrid pack"]
     B --> C[".xyb Bundle"]
-    C --> D["Deploy"]
-    D --> E["Registry"]
+    C --> D["Distribute"]
 
     A@{ shape: doc}
     B@{ shape: terminal}
     C@{ shape: docs}
     D@{ shape: terminal}
-    E@{ shape: db}
 ```
 
 ## Phase 4: Package Models
@@ -67,82 +65,57 @@ Every model needs execution configuration:
 ### Pack the Bundle
 
 ```bash
-xybrid pack my-model --version 1.0.0 --target macos-arm64
+xybrid pack my-model --version 1.0.0 --target onnx
 ```
 
-This creates `my-model@1.0.0.xyb` containing:
+This writes `./dist/my-model-1.0.0-onnx.xyb` containing:
 
 ```
-my-model@1.0.0.xyb/
+my-model-1.0.0-onnx.xyb/
 ├── manifest.json          # Bundle metadata + hash
 ├── model_metadata.json    # Execution config
 ├── model.onnx             # Model weights
 └── vocab.json             # Supporting files
 ```
 
-### Platform Variants
+### Runtime Format Variants
 
-Create bundles for each target platform:
-
-```bash
-# Apple Silicon Mac
-xybrid pack whisper-tiny --version 1.0.0 --target macos-arm64
-
-# iOS
-xybrid pack whisper-tiny --version 1.0.0 --target ios-arm64
-
-# Android
-xybrid pack whisper-tiny --version 1.0.0 --target android-arm64
-```
-
-## Phase 5: Deploy to Registry
-
-### Local Registry
-
-Deploy to the local cache:
+The `--target` flag tags the runtime format the bundle is compiled for. Supported values: `onnx`, `coreml`, `tflite`, `generic` (default: `onnx`).
 
 ```bash
-xybrid deploy my-model@1.0.0.xyb --registry local
+# ONNX Runtime (works on macOS, iOS, Android, Linux, Windows)
+xybrid pack whisper-tiny --version 1.0.0 --target onnx
+
+# CoreML (Apple Silicon optimisation)
+xybrid pack whisper-tiny --version 1.0.0 --target coreml
+
+# TensorFlow Lite (mobile)
+xybrid pack whisper-tiny --version 1.0.0 --target tflite
 ```
 
-Bundles are stored at:
+## Phase 5: Distribute the Bundle
 
-```
-~/.xybrid/registry/
-├── index.json                    # Bundle index
-└── my-model/
-    └── 1.0.0/
-        └── macos-arm64/
-            └── my-model.xyb
-```
+The `.xyb` file written to `./dist/` is self-contained. Distribute it however suits your project:
 
-### Remote Registry
+- Attach to a GitHub release
+- Host on HuggingFace, S3, or any HTTP server
+- Ship inside an app bundle
 
-Deploy to an HTTP registry:
+Consumers load the bundle directly without going through a registry:
 
 ```bash
-xybrid deploy my-model@1.0.0.xyb --registry remote -p https://registry.xybrid.dev
+xybrid run --bundle ./dist/my-model-1.0.0-onnx.xyb --input-text "Hello"
 ```
 
-### Verify Deployment
-
-Check the registry index:
-
-```bash
-cat ~/.xybrid/registry/index.json
+```rust
+let model = ModelLoader::from_bundle("./dist/my-model-1.0.0-onnx.xyb")?.load()?;
 ```
 
-```json
-{
-  "my-model/1.0.0/macos-arm64": {
-    "model_id": "my-model",
-    "version": "1.0.0",
-    "target": "macos-arm64",
-    "size_bytes": 12345678,
-    "path": "~/.xybrid/registry/my-model/1.0.0/macos-arm64/my-model.xyb"
-  }
-}
+```dart
+final model = await XybridModelLoader.fromBundle('my-model-1.0.0-onnx.xyb').load();
 ```
+
+If you want to publish to the public xybrid registry, see the `xybrid bundle` command, which fetches a published model and produces a `.xyb`.
 
 ## Bundle Types
 
@@ -207,41 +180,6 @@ cat ~/.xybrid/registry/index.json
     }
   ]
 }
-```
-
-## Using justfile Commands
-
-The project includes convenient commands:
-
-```bash
-# Create all bundles
-just registry::create
-
-# Create specific bundle
-just registry::create-bundle whisper-tiny
-
-# Check cache status
-just registry::cache-status
-
-# Start local registry server
-just registry::serve-local
-
-# Clean registry
-just registry::clean
-```
-
-## Registry Server
-
-Serve bundles over HTTP for distributed access:
-
-```bash
-just registry::serve-local
-```
-
-This serves `~/.xybrid/registry/` on port 8080. Clients can fetch bundles:
-
-```bash
-curl http://localhost:8080/bundles/whisper-tiny/1.0/macos-arm64/whisper-tiny.xyb
 ```
 
 ## Next Steps

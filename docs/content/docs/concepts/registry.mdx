@@ -71,24 +71,6 @@ The registry automatically detects the current platform:
 | Linux | `linux-x86_64` |
 | Windows | `windows-x86_64` |
 
-## Registry Server
-
-### Start Server
-
-```bash
-just registry::serve-local
-```
-
-Serves from `~/.xybrid/registry/` on `http://localhost:8080`.
-
-### Endpoints
-
-| Endpoint | Description |
-|----------|-------------|
-| `GET /index` | List all bundles |
-| `GET /bundles/{id}/{version}/{platform}/{id}.xyb` | Download bundle |
-| `GET /health` | Health check |
-
 ## Using in Pipelines
 
 Reference the registry URL in pipeline YAML:

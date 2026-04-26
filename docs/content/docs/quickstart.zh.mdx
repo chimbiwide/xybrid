@@ -152,10 +152,10 @@ cargo install xybrid-cli
 xybrid models list
 
 # 运行文本转语音
-xybrid run kokoro-82m --input "Hello from Xybrid!" --output hello.wav
+xybrid run --model kokoro-82m --input-text "Hello from Xybrid!" --output hello.wav
 
 # 运行语音转文字
-xybrid run whisper-tiny --input recording.wav
+xybrid run --model whisper-tiny --input-audio recording.wav
 ```
 
 **预期输出：**
