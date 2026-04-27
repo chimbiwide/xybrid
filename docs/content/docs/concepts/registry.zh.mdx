@@ -71,24 +71,6 @@ Bundle 包含模型 ID、版本和平台：
 | Linux | `linux-x86_64` |
 | Windows | `windows-x86_64` |
 
-## 注册表服务器
-
-### 启动服务器
-
-```bash
-just registry::serve-local
-```
-
-从 `~/.xybrid/registry/` 在 `http://localhost:8080` 提供服务。
-
-### 接口
-
-| 接口 | 说明 |
-|----------|-------------|
-| `GET /index` | 列出所有 Bundle |
-| `GET /bundles/{id}/{version}/{platform}/{id}.xyb` | 下载 Bundle |
-| `GET /health` | 健康检查 |
-
 ## 在流水线中使用
 
 在流水线 YAML 中引用注册表 URL：

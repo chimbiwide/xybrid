@@ -276,7 +276,7 @@ flutter analyze
 
 1. Check internet connectivity
 2. Verify model ID: `xybrid models list`
-3. Try downloading manually: `xybrid models pull <model-id>`
+3. Try downloading manually: `xybrid fetch --model <model-id>`
 
 ## Running Tests
 

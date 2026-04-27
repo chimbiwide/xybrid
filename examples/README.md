@@ -201,7 +201,7 @@ Native libraries need to be built from Rust before the SDK works:
 
 1. Check internet connectivity
 2. Verify the model ID exists in the registry: `xybrid models list`
-3. For offline usage, download models first: `xybrid models pull <model-id>`
+3. For offline usage, download models first: `xybrid fetch --model <model-id>`
 
 ### Build failures
 

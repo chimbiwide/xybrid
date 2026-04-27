@@ -163,7 +163,7 @@ irm https://raw.githubusercontent.com/xybrid-ai/xybrid/master/install.ps1 | iex
 
 **CLI:**
 ```sh
-xybrid run kokoro-82m --input "国破山河在，城春草木深" -o output.wav
+xybrid run --model kokoro-82m --input-text "国破山河在，城春草木深" -o output.wav
 ```
 
 **Flutter:**
@@ -216,7 +216,7 @@ stages:
 
 **CLI:**
 ```sh
-xybrid run voice-assistant.yaml --input question.wav -o response.wav
+xybrid run --config voice-assistant.yaml --input-audio question.wav -o response.wav
 ```
 
 **Flutter:**

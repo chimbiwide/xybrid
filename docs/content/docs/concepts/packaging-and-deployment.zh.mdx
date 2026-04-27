@@ -1,26 +1,24 @@
 ---
 title: 打包与部署
-description: Bundle 创建与注册表发布
+description: Bundle 创建与分发
 ---
 
-将模型打包为可分发的 `.xyb` Bundle 并发布到注册表。
+将模型打包为可分发的 `.xyb` Bundle。
 
 ## 概览
 
-部署工作流：
+打包工作流：
 
 ```mermaid
 flowchart LR
-    A["模型文件"] --> B["打包"]
+    A["模型文件"] --> B["xybrid pack"]
     B --> C[".xyb Bundle"]
-    C --> D["部署"]
-    D --> E["注册表"]
+    C --> D["分发"]
 
     A@{ shape: doc}
     B@{ shape: terminal}
     C@{ shape: docs}
     D@{ shape: terminal}
-    E@{ shape: db}
 ```
 
 ## 第四阶段：打包模型
@@ -67,82 +65,57 @@ models/my-model/
 ### 打包 Bundle
 
 ```bash
-xybrid pack my-model --version 1.0.0 --target macos-arm64
+xybrid pack my-model --version 1.0.0 --target onnx
 ```
 
-此命令创建 `my-model@1.0.0.xyb`，包含：
+此命令写入 `./dist/my-model-1.0.0-onnx.xyb`，包含：
 
 ```
-my-model@1.0.0.xyb/
+my-model-1.0.0-onnx.xyb/
 ├── manifest.json          # Bundle 元数据 + 哈希值
 ├── model_metadata.json    # 执行配置
 ├── model.onnx             # 模型权重
 └── vocab.json             # 其他所需文件
 ```
 
-### 平台变体
+### 运行时格式变体
 
-为每个目标平台创建 Bundle：
-
-```bash
-# Apple Silicon Mac
-xybrid pack whisper-tiny --version 1.0.0 --target macos-arm64
-
-# iOS
-xybrid pack whisper-tiny --version 1.0.0 --target ios-arm64
-
-# Android
-xybrid pack whisper-tiny --version 1.0.0 --target android-arm64
-```
-
-## 第五阶段：部署到注册表
-
-### 本地注册表
-
-部署到本地缓存：
+`--target` 参数标识 Bundle 编译的运行时格式。支持的值：`onnx`、`coreml`、`tflite`、`generic`（默认：`onnx`）。
 
 ```bash
-xybrid deploy my-model@1.0.0.xyb --registry local
+# ONNX Runtime（适用于 macOS、iOS、Android、Linux、Windows）
+xybrid pack whisper-tiny --version 1.0.0 --target onnx
+
+# CoreML（Apple Silicon 优化）
+xybrid pack whisper-tiny --version 1.0.0 --target coreml
+
+# TensorFlow Lite（移动端）
+xybrid pack whisper-tiny --version 1.0.0 --target tflite
 ```
 
-Bundle 存储路径：
+## 第五阶段：分发 Bundle
 
-```
-~/.xybrid/registry/
-├── index.json                    # Bundle 索引
-└── my-model/
-    └── 1.0.0/
-        └── macos-arm64/
-            └── my-model.xyb
-```
+写入 `./dist/` 的 `.xyb` 文件是自包含的。可以按项目需要任意分发：
 
-### 远程注册表
+- 附加到 GitHub Release
+- 托管在 HuggingFace、S3 或任意 HTTP 服务器
+- 打包进应用本身
 
-部署到 HTTP 注册表：
+消费方无需经过注册表，直接加载 Bundle：
 
 ```bash
-xybrid deploy my-model@1.0.0.xyb --registry remote -p https://registry.xybrid.dev
+xybrid run --bundle ./dist/my-model-1.0.0-onnx.xyb --input-text "Hello"
 ```
 
-### 验证部署
-
-检查注册表索引：
-
-```bash
-cat ~/.xybrid/registry/index.json
+```rust
+let model = ModelLoader::from_bundle("./dist/my-model-1.0.0-onnx.xyb")?.load()?;
 ```
 
-```json
-{
-  "my-model/1.0.0/macos-arm64": {
-    "model_id": "my-model",
-    "version": "1.0.0",
-    "target": "macos-arm64",
-    "size_bytes": 12345678,
-    "path": "~/.xybrid/registry/my-model/1.0.0/macos-arm64/my-model.xyb"
-  }
-}
+```dart
+final model = await XybridModelLoader.fromBundle('my-model-1.0.0-onnx.xyb').load();
 ```
+
+如需发布到 xybrid 公共注册表，请参阅 `xybrid bundle` 命令——它会从已发布的模型构建 `.xyb`。
 
 ## Bundle 类型
 
@@ -207,41 +180,6 @@ cat ~/.xybrid/registry/index.json
     }
   ]
 }
-```
-
-## 使用 justfile 命令
-
-项目内置了便捷命令：
-
-```bash
-# 创建所有 Bundle
-just registry::create
-
-# 创建指定 Bundle
-just registry::create-bundle whisper-tiny
-
-# 检查缓存状态
-just registry::cache-status
-
-# 启动本地注册表服务器
-just registry::serve-local
-
-# 清理注册表
-just registry::clean
-```
-
-## 注册表服务器
-
-通过 HTTP 提供 Bundle 以供分布式访问：
-
-```bash
-just registry::serve-local
-```
-
-此命令在 8080 端口提供 `~/.xybrid/registry/` 服务。客户端可获取 Bundle：
-
-```bash
-curl http://localhost:8080/bundles/whisper-tiny/1.0/macos-arm64/whisper-tiny.xyb
 ```
 
 ## 下一步
