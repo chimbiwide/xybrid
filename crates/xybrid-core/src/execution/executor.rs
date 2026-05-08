@@ -38,6 +38,14 @@ use std::path::Path;
 
 use super::listener::ExecutionGuard;
 
+fn mark_execution_terminal(guard: &ExecutionGuard, error: &AdapterError) {
+    if error.cloud_fallback_abort_reason().is_some() {
+        guard.set_controlled_abort();
+    } else {
+        guard.set_failed(error.to_string());
+    }
+}
+
 // Internal: ONNX-specific types needed for optimized execution paths
 // These are implementation details, not part of the public API
 use crate::runtime_adapter::onnx::{ONNXSession, OnnxRuntime};
@@ -197,7 +205,7 @@ impl TemplateExecutor {
         let guard = ExecutionGuard::new(&metadata.model_id, "execute");
         let result = self.execute_impl(metadata, input, config);
         if let Err(e) = &result {
-            guard.set_failed(e.to_string());
+            mark_execution_terminal(&guard, e);
         }
         result
     }
@@ -521,7 +529,7 @@ impl TemplateExecutor {
         let guard = ExecutionGuard::new(&metadata.model_id, "execute_with_context");
         let result = self.execute_with_context_impl(metadata, input, context, config);
         if let Err(e) = &result {
-            guard.set_failed(e.to_string());
+            mark_execution_terminal(&guard, e);
         }
         result
     }
@@ -665,7 +673,7 @@ impl TemplateExecutor {
         let guard = ExecutionGuard::new(&metadata.model_id, "execute_streaming");
         let result = self.execute_streaming_impl(metadata, input, on_token, config);
         if let Err(e) = &result {
-            guard.set_failed(e.to_string());
+            mark_execution_terminal(&guard, e);
         }
         result
     }
@@ -761,7 +769,7 @@ impl TemplateExecutor {
         let result =
             self.execute_streaming_with_context_impl(metadata, input, context, on_token, config);
         if let Err(e) = &result {
-            guard.set_failed(e.to_string());
+            mark_execution_terminal(&guard, e);
         }
         result
     }
@@ -2117,6 +2125,7 @@ fn mirror_llm_metrics_to_span(output: &crate::runtime_adapter::llm::GenerationOu
 mod tests {
     use super::super::template::PreprocessingStep;
     use super::*;
+    use crate::ir::EnvelopeKind;
 
     // ============================================================================
     // Constructor Tests

@@ -61,8 +61,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
-use xybrid_core::context::StageDescriptor;
-use xybrid_core::device_adapter::{DeviceAdapter, LocalDeviceAdapter};
+use xybrid_core::context::{DeviceMetrics, StageDescriptor};
+use xybrid_core::device::ResourceMonitor;
 use xybrid_core::ir::{Envelope, EnvelopeKind};
 use xybrid_core::orchestrator::routing_engine::LocalAvailability;
 use xybrid_core::orchestrator::{
@@ -451,6 +451,7 @@ impl Pipeline {
             "google" | "gemini" => Some(IntegrationProvider::Google),
             "elevenlabs" | "eleven" | "eleven_labs" => Some(IntegrationProvider::ElevenLabs),
             "openrouter" | "open_router" => Some(IntegrationProvider::OpenRouter),
+            "deepseek" | "deep_seek" => Some(IntegrationProvider::DeepSeek),
             _ => Some(IntegrationProvider::Custom),
         }
     }
@@ -663,8 +664,7 @@ impl Pipeline {
         let authority = LocalAuthority::new();
 
         // Get current device metrics for routing decisions
-        let device_adapter = LocalDeviceAdapter::new();
-        let metrics = device_adapter.collect_metrics();
+        let metrics = DeviceMetrics::default();
 
         let stages_to_fetch: Vec<_> = self
             .stages
@@ -707,6 +707,7 @@ impl Pipeline {
                 model_id: model_id.clone(),
                 input_kind: EnvelopeKind::Text("".to_string()), // At preload time, we don't have actual input
                 metrics: metrics.clone(),
+                resource_monitor: ResourceMonitor::global(),
                 explicit_target,
             };
 
@@ -892,8 +893,7 @@ impl Pipeline {
         drop(handle);
 
         // Collect runtime metrics from device
-        let device_adapter = LocalDeviceAdapter::new();
-        let metrics = device_adapter.collect_metrics();
+        let metrics = DeviceMetrics::default();
 
         // Set telemetry context
         let trace_id = uuid::Uuid::new_v4();
@@ -1025,8 +1025,7 @@ impl Pipeline {
 
         tokio::task::spawn_blocking(move || {
             // Collect runtime metrics from device
-            let device_adapter = LocalDeviceAdapter::new();
-            let metrics = device_adapter.collect_metrics();
+            let metrics = DeviceMetrics::default();
 
             let trace_id = uuid::Uuid::new_v4();
             let pipeline_id = name
@@ -1366,6 +1365,14 @@ stages:
             }
             .to_string(),
             "integration:openai"
+        );
+    }
+
+    #[test]
+    fn parse_provider_accepts_deepseek() {
+        assert_eq!(
+            Pipeline::parse_provider("deepseek"),
+            Some(IntegrationProvider::DeepSeek)
         );
     }
 

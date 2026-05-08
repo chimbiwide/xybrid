@@ -343,6 +343,12 @@ struct PlatformEvent {
     timestamp: Option<String>,
     pipeline_id: Option<Uuid>,
     trace_id: Option<Uuid>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    correlation_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    outcome_category: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    abort_reason: Option<String>,
     stages: Option<serde_json::Value>,
 }
 
@@ -863,6 +869,9 @@ fn convert_to_platform_event(
     let mut payload = serde_json::json!({});
     let mut event_pipeline_id = pipeline_id;
     let mut event_trace_id = trace_id;
+    let mut correlation_id = None;
+    let mut outcome_category = None;
+    let mut abort_reason = None;
 
     if let Some(stage) = &event.stage_name {
         payload["stage_name"] = serde_json::json!(stage);
@@ -915,6 +924,9 @@ fn convert_to_platform_event(
                 // flat JSON-path selectors without teaching each consumer
                 // the nested shape.
                 "resource_summary",
+                "correlation_id",
+                "outcome_category",
+                "abort_reason",
             ]
             .iter()
             {
@@ -924,6 +936,15 @@ fn convert_to_platform_event(
                     }
                 }
             }
+            correlation_id = parsed
+                .get("correlation_id")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string);
+            outcome_category = parsed.get("outcome_category").cloned();
+            abort_reason = parsed
+                .get("abort_reason")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string);
             payload["data"] = parsed;
         } else {
             payload["data"] = serde_json::json!(data);
@@ -955,8 +976,20 @@ fn convert_to_platform_event(
     //      historical path, preserved for in-process local inference
     //      where only one model call is active at a time and the race
     //      doesn't manifest.
-    let stages = if (event.event_type == "PipelineComplete" || event.event_type == "ModelComplete")
-        && core_tracing::is_tracing_enabled()
+    // Span-bearing event types: completion-family events publish a final
+    // ModelComplete/PipelineComplete that drains the collector, AND the
+    // cloud-fallback flow publishes LocalAborted/CloudRetry as terminal
+    // markers for each leg without ever firing a *Complete. Both kinds
+    // need their flamegraph attached at the wire layer or the dashboard
+    // sees an empty trace detail. Adding LocalAborted/CloudRetry here is
+    // the symmetric counterpart of the same addition in
+    // `snapshot_spans_into_event` — both gates must agree, otherwise the
+    // SDK attaches spans to event.data["spans"] but `convert_to_platform_event`
+    // strips them again before the wire.
+    let stages = if matches!(
+        event.event_type.as_str(),
+        "PipelineComplete" | "ModelComplete" | "LocalAborted" | "CloudRetry"
+    ) && core_tracing::is_tracing_enabled()
     {
         let embedded_spans: Option<serde_json::Value> = payload
             .get("data")
@@ -1060,6 +1093,9 @@ fn convert_to_platform_event(
         timestamp,
         pipeline_id: event_pipeline_id,
         trace_id: event_trace_id,
+        correlation_id,
+        outcome_category,
+        abort_reason,
         stages,
     }
 }
@@ -1376,6 +1412,248 @@ pub fn publish_with_resource_summary(
     publish_telemetry_event(event);
 }
 
+/// Build a `LocalAborted` telemetry event for a resource-driven cloud-fallback
+/// abort.
+///
+/// The event carries the abort reason, the local leg's latency and partial
+/// token count, and a `correlation_id` shared with the paired `CloudRetry`
+/// event so analytics joins on the two halves of one logical inference.
+/// `correlation_id`, `outcome_category`, and `abort_reason` ride in
+/// `event.data`; the platform-event hoist (see `convert_to_platform_event`)
+/// promotes them to top-level columns.
+pub fn local_aborted_event(
+    correlation_id: &str,
+    model_id: &str,
+    abort_reason: xybrid_core::abort::AbortReason,
+    latency_ms: u32,
+    tokens_emitted: u32,
+) -> TelemetryEvent {
+    TelemetryEvent {
+        event_type: "LocalAborted".to_string(),
+        stage_name: Some(model_id.to_string()),
+        target: Some("local".to_string()),
+        latency_ms: Some(latency_ms),
+        error: None,
+        data: Some(
+            serde_json::json!({
+                "model_id": model_id,
+                "correlation_id": correlation_id,
+                "outcome_category": {
+                    "kind": "aborted_for_cloud_fallback",
+                    "reason": abort_reason.as_str(),
+                },
+                "abort_reason": abort_reason.as_str(),
+                "tokens_emitted": tokens_emitted,
+            })
+            .to_string(),
+        ),
+        timestamp_ms: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0),
+    }
+}
+
+/// Convenience wrapper: build and publish a `LocalAborted` event.
+pub fn publish_local_aborted(
+    correlation_id: &str,
+    model_id: &str,
+    abort_reason: xybrid_core::abort::AbortReason,
+    latency_ms: u32,
+    tokens_emitted: u32,
+) {
+    publish_telemetry_event(local_aborted_event(
+        correlation_id,
+        model_id,
+        abort_reason,
+        latency_ms,
+        tokens_emitted,
+    ));
+}
+
+pub(crate) fn redact_error_for_telemetry(message: &str) -> String {
+    let redacted = [
+        "Authorization: Bearer ",
+        "authorization: Bearer ",
+        "Bearer ",
+        "api_key=",
+        "api-key=",
+        "x-api-key: ",
+        "X-API-Key: ",
+    ]
+    .iter()
+    .fold(message.to_string(), |current, marker| {
+        redact_value_after_marker(&current, marker)
+    });
+
+    redact_secret_like_tokens(&redacted)
+}
+
+fn redact_value_after_marker(input: &str, marker: &str) -> String {
+    let mut output = String::with_capacity(input.len());
+    let mut rest = input;
+
+    while let Some(index) = rest.find(marker) {
+        let marker_end = index + marker.len();
+        output.push_str(&rest[..marker_end]);
+        rest = &rest[marker_end..];
+
+        let value_len = rest
+            .find(|c: char| c.is_whitespace() || matches!(c, ',' | ';' | ')' | ']'))
+            .unwrap_or(rest.len());
+        output.push_str("[REDACTED]");
+        rest = &rest[value_len..];
+    }
+
+    output.push_str(rest);
+    output
+}
+
+fn redact_secret_like_tokens(input: &str) -> String {
+    input
+        .split_whitespace()
+        .map(redact_secret_like_token)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn redact_secret_like_token(token: &str) -> String {
+    let trimmed =
+        token.trim_matches(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.')));
+    if trimmed.starts_with("sk_")
+        || trimmed.starts_with("sk-")
+        || trimmed.starts_with("hf_")
+        || trimmed.starts_with("ghp_")
+        || trimmed.starts_with("gho_")
+        || trimmed.starts_with("xoxb-")
+        || trimmed.starts_with("xoxp-")
+    {
+        token.replacen(trimmed, "[REDACTED]", 1)
+    } else {
+        token.to_string()
+    }
+}
+
+/// Build a terminal event for a local abort whose cloud retry was blocked by
+/// live policy. This is the one fallback path that remains a hard failure.
+pub fn cloud_denied_by_policy_event(
+    correlation_id: &str,
+    model_id: &str,
+    abort_reason: xybrid_core::abort::AbortReason,
+    policy_reason: &str,
+    latency_ms: u32,
+) -> TelemetryEvent {
+    let policy_reason = redact_error_for_telemetry(policy_reason);
+    TelemetryEvent {
+        event_type: "LocalFailed".to_string(),
+        stage_name: Some(model_id.to_string()),
+        target: Some("local".to_string()),
+        latency_ms: Some(latency_ms),
+        error: Some(format!("cloud_denied_by_policy: {}", policy_reason)),
+        data: Some(
+            serde_json::json!({
+                "model_id": model_id,
+                "correlation_id": correlation_id,
+                "outcome_category": {
+                    "kind": "hard_fail",
+                    "reason": "cloud_denied_by_policy",
+                },
+                "terminal_state_tag": {
+                    "kind": "cloud_denied_by_policy",
+                    "abort_reason": abort_reason.as_str(),
+                },
+                "abort_reason": abort_reason.as_str(),
+                "policy_reason": policy_reason,
+                "status": "error",
+            })
+            .to_string(),
+        ),
+        timestamp_ms: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0),
+    }
+}
+
+pub fn publish_cloud_denied_by_policy(
+    correlation_id: &str,
+    model_id: &str,
+    abort_reason: xybrid_core::abort::AbortReason,
+    policy_reason: &str,
+    latency_ms: u32,
+) {
+    publish_telemetry_event(cloud_denied_by_policy_event(
+        correlation_id,
+        model_id,
+        abort_reason,
+        policy_reason,
+        latency_ms,
+    ));
+}
+
+/// Build a `CloudRetry` telemetry event for the cloud leg of a fallback run.
+///
+/// Emits with the shared `correlation_id` and the cloud provider name when
+/// known. Pair with [`local_aborted_event`] (same `correlation_id`) to
+/// reconstruct one logical inference across two execution targets.
+///
+/// `error` is `None` when the cloud leg streamed successfully; `Some(msg)`
+/// when it failed before producing a final result. The failure branch sets
+/// `event.error` and tags the payload with `status = "error"` so traces
+/// list views and dashboards can distinguish a cloud-attempt-that-failed
+/// from a cloud-attempt-that-succeeded.
+pub fn cloud_retry_event(
+    correlation_id: &str,
+    model_id: &str,
+    provider: Option<&str>,
+    latency_ms: u32,
+    tokens_emitted: u32,
+    error: Option<&str>,
+) -> TelemetryEvent {
+    let provider_value = provider.unwrap_or("xybrid");
+    let status = if error.is_some() { "error" } else { "ok" };
+    TelemetryEvent {
+        event_type: "CloudRetry".to_string(),
+        stage_name: Some(model_id.to_string()),
+        target: Some("cloud".to_string()),
+        latency_ms: Some(latency_ms),
+        error: error.map(redact_error_for_telemetry),
+        data: Some(
+            serde_json::json!({
+                "model_id": model_id,
+                "correlation_id": correlation_id,
+                "provider": provider_value,
+                "tokens_emitted": tokens_emitted,
+                "status": status,
+            })
+            .to_string(),
+        ),
+        timestamp_ms: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0),
+    }
+}
+
+/// Convenience wrapper: build and publish a `CloudRetry` event.
+pub fn publish_cloud_retry(
+    correlation_id: &str,
+    model_id: &str,
+    provider: Option<&str>,
+    latency_ms: u32,
+    tokens_emitted: u32,
+    error: Option<&str>,
+) {
+    publish_telemetry_event(cloud_retry_event(
+        correlation_id,
+        model_id,
+        provider,
+        latency_ms,
+        tokens_emitted,
+        error,
+    ));
+}
+
 /// Initialize platform telemetry from environment variables
 ///
 /// Returns `true` if initialization succeeded, `false` if XYBRID_API_KEY is not set.
@@ -1632,6 +1910,19 @@ pub fn convert_orchestrator_event(event: &OrchestratorEvent) -> TelemetryEvent {
             ),
             timestamp_ms,
         },
+        OrchestratorEvent::LocalAborted {
+            stage_name,
+            target,
+            reason,
+        } => TelemetryEvent {
+            event_type: "LocalAborted".to_string(),
+            stage_name: Some(stage_name.clone()),
+            target: Some(target.clone()),
+            latency_ms: None,
+            error: Some(reason.clone()),
+            data: Some(serde_json::json!({ "reason": reason }).to_string()),
+            timestamp_ms,
+        },
         _ => TelemetryEvent {
             event_type: format!("{:?}", event),
             stage_name: None,
@@ -1650,11 +1941,17 @@ pub fn convert_orchestrator_event(event: &OrchestratorEvent) -> TelemetryEvent {
 /// When it does act, it drains the global collector so the next unit of
 /// work on this thread starts with a clean slate.
 fn snapshot_spans_into_event(event: TelemetryEvent) -> TelemetryEvent {
-    let is_completion = matches!(
+    // Span-bearing event types — see the matching list in
+    // `convert_to_platform_event` for why LocalAborted/CloudRetry are here.
+    // The cloud-fallback flow never fires a ModelComplete/PipelineComplete,
+    // so without these the cloud-leg `SpanGuard`s in
+    // `runtime_adapter/cloud/mod.rs` get stranded in the global collector
+    // and the dashboard's flamegraph stays empty.
+    let is_span_bearing = matches!(
         event.event_type.as_str(),
-        "PipelineComplete" | "ModelComplete"
+        "PipelineComplete" | "ModelComplete" | "LocalAborted" | "CloudRetry"
     );
-    if !is_completion || !core_tracing::is_tracing_enabled() {
+    if !is_span_bearing || !core_tracing::is_tracing_enabled() {
         return event;
     }
 
@@ -2035,6 +2332,150 @@ mod tests {
     }
 
     #[test]
+    fn routing_outcome_fields_hoist_to_platform_event_top_level() {
+        let event = TelemetryEvent {
+            event_type: "ModelComplete".to_string(),
+            stage_name: Some("qwen2.5-0.5b".to_string()),
+            target: Some("local".to_string()),
+            latency_ms: Some(420),
+            error: None,
+            data: Some(
+                serde_json::json!({
+                    "model_id": "qwen2.5-0.5b",
+                    "correlation_id": "run-string-123",
+                    "outcome_category": {
+                        "kind": "aborted_for_cloud_fallback",
+                        "reason": "stress_memory"
+                    },
+                    "abort_reason": "stress_memory"
+                })
+                .to_string(),
+            ),
+            timestamp_ms: 1_700_000_000_000,
+        };
+
+        let config = TelemetryConfig::new("https://ingest.example.test", "sk_test_abc");
+        let platform = convert_to_platform_event(&event, &config, None, None, None);
+
+        assert_eq!(platform.correlation_id.as_deref(), Some("run-string-123"));
+        assert_eq!(
+            platform
+                .outcome_category
+                .as_ref()
+                .and_then(|v| v.get("kind")),
+            Some(&serde_json::json!("aborted_for_cloud_fallback"))
+        );
+        assert_eq!(platform.abort_reason.as_deref(), Some("stress_memory"));
+        assert_eq!(platform.payload["correlation_id"], "run-string-123");
+        assert_eq!(
+            platform.payload["outcome_category"]["kind"],
+            "aborted_for_cloud_fallback"
+        );
+        assert_eq!(platform.payload["abort_reason"], "stress_memory");
+    }
+
+    #[test]
+    fn local_aborted_and_cloud_retry_events_share_correlation_id() {
+        let local = local_aborted_event(
+            "run-abc-123",
+            "qwen2.5-0.5b",
+            xybrid_core::abort::AbortReason::StressMemory,
+            180,
+            4,
+        );
+        let cloud = cloud_retry_event("run-abc-123", "qwen2.5-0.5b", Some("openai"), 920, 38, None);
+
+        assert_eq!(local.event_type, "LocalAborted");
+        assert_eq!(local.target.as_deref(), Some("local"));
+        assert_eq!(local.latency_ms, Some(180));
+
+        assert_eq!(cloud.event_type, "CloudRetry");
+        assert_eq!(cloud.target.as_deref(), Some("cloud"));
+        assert_eq!(cloud.latency_ms, Some(920));
+
+        let local_data: serde_json::Value =
+            serde_json::from_str(local.data.as_ref().unwrap()).unwrap();
+        let cloud_data: serde_json::Value =
+            serde_json::from_str(cloud.data.as_ref().unwrap()).unwrap();
+
+        assert_eq!(local_data["correlation_id"], "run-abc-123");
+        assert_eq!(cloud_data["correlation_id"], "run-abc-123");
+        assert_eq!(local_data["abort_reason"], "stress_memory");
+        assert_eq!(
+            local_data["outcome_category"]["kind"],
+            "aborted_for_cloud_fallback"
+        );
+        assert_eq!(local_data["outcome_category"]["reason"], "stress_memory");
+        assert_eq!(local_data["tokens_emitted"], 4);
+        assert_eq!(cloud_data["provider"], "openai");
+        assert_eq!(cloud_data["tokens_emitted"], 38);
+
+        // The platform-event hoist promotes `correlation_id` and `abort_reason`
+        // out of `event.data` so analytics can join on top-level columns.
+        let config = TelemetryConfig::new("https://ingest.example.test", "sk_test_abc");
+        let platform_local = convert_to_platform_event(&local, &config, None, None, None);
+        let platform_cloud = convert_to_platform_event(&cloud, &config, None, None, None);
+
+        assert_eq!(
+            platform_local.correlation_id.as_deref(),
+            Some("run-abc-123")
+        );
+        assert_eq!(
+            platform_cloud.correlation_id.as_deref(),
+            Some("run-abc-123")
+        );
+        assert_eq!(
+            platform_local.abort_reason.as_deref(),
+            Some("stress_memory")
+        );
+    }
+
+    #[test]
+    fn cloud_retry_event_defaults_provider_when_unspecified() {
+        let cloud = cloud_retry_event("run-xyz", "model-x", None, 50, 10, None);
+        let cloud_data: serde_json::Value =
+            serde_json::from_str(cloud.data.as_ref().unwrap()).unwrap();
+        assert_eq!(cloud_data["provider"], "xybrid");
+        assert_eq!(cloud_data["status"], "ok");
+        assert!(cloud.error.is_none());
+    }
+
+    #[test]
+    fn cloud_retry_event_marks_failure_branch() {
+        let cloud = cloud_retry_event(
+            "run-fail-1",
+            "deepseek-chat",
+            Some("deepseek"),
+            842,
+            0,
+            Some("Gateway returned 502: Provider error"),
+        );
+        let cloud_data: serde_json::Value =
+            serde_json::from_str(cloud.data.as_ref().unwrap()).unwrap();
+        assert_eq!(cloud.event_type, "CloudRetry");
+        assert_eq!(cloud.target.as_deref(), Some("cloud"));
+        assert_eq!(cloud.latency_ms, Some(842));
+        assert_eq!(
+            cloud.error.as_deref(),
+            Some("Gateway returned 502: Provider error")
+        );
+        assert_eq!(cloud_data["status"], "error");
+        assert_eq!(cloud_data["tokens_emitted"], 0);
+    }
+
+    #[test]
+    fn telemetry_error_redaction_removes_api_keys_and_bearer_tokens() {
+        let redacted = redact_error_for_telemetry(
+            "Gateway returned 401: Authorization: Bearer sk_test_abc123 and api_key=hf_secret_xyz",
+        );
+
+        assert!(redacted.contains("Authorization: Bearer [REDACTED]"));
+        assert!(redacted.contains("api_key=[REDACTED]"));
+        assert!(!redacted.contains("sk_test_abc123"));
+        assert!(!redacted.contains("hf_secret_xyz"));
+    }
+
+    #[test]
     fn attach_resource_summary_with_none_is_noop() {
         let original = TelemetryEvent {
             event_type: "ModelComplete".to_string(),
@@ -2350,6 +2791,9 @@ mod tests {
             timestamp: None,
             pipeline_id: None,
             trace_id: None,
+            correlation_id: None,
+            outcome_category: None,
+            abort_reason: None,
             stages: None,
         }];
 
