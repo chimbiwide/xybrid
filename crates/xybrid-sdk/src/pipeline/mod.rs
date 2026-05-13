@@ -895,7 +895,11 @@ impl Pipeline {
         // Collect runtime metrics from device
         let metrics = DeviceMetrics::default();
 
-        // Set telemetry context
+        // Install per-call pipeline context. The RAII guard clears on
+        // every exit (success, `?` error, panic) so we don't leak the
+        // global `trace_id` onto later unrelated telemetry — replaces
+        // the manual `set_telemetry_pipeline_context(None, None)` calls
+        // that previously had to be threaded through every exit.
         let trace_id = uuid::Uuid::new_v4();
         let pipeline_id = self
             .name
@@ -928,8 +932,6 @@ impl Pipeline {
             .map_err(|e| SdkError::PipelineError(format!("Pipeline execution failed: {}", e)))?;
         let total_latency_ms = start_time.elapsed().as_millis() as u32;
 
-        // Defer clearing context until after the PipelineComplete publish so
-        // direct SDK telemetry still carries this run's pipeline_id/trace_id.
         let stages: Vec<StageTiming> = results
             .iter()
             .map(|result| StageTiming {
@@ -955,10 +957,11 @@ impl Pipeline {
         };
 
         // Emit telemetry event. LLM metrics ride on the separate
-        // `PlatformEvent.stages[].spans[].metadata` path (populated via
-        // `xybrid_core::tracing::add_metadata` in the LLM adapter), so we
-        // intentionally keep this `data` blob compact — only the fields
-        // that already crossed the wire before llm_metrics existed.
+        // `PlatformEvent.stages[].spans[].metadata` path (populated
+        // via `xybrid_core::tracing::add_metadata` in the LLM
+        // adapter), so we intentionally keep this `data` blob compact
+        // — only the fields that already crossed the wire before
+        // llm_metrics existed.
         let stage_data: Vec<serde_json::Value> = results
             .iter()
             .map(|result| {
@@ -970,10 +973,27 @@ impl Pipeline {
             })
             .collect();
 
+        // For single-stage pipelines, attribute the `PipelineComplete`
+        // row to the inner stage so the Traces dashboard reads
+        // `pipeline / <stage>` (with a real `target`) instead of the
+        // less-informative `pipeline / <pipeline-name>` with `target:
+        // None`. Multi-stage pipelines keep the pipeline-level naming
+        // so ASR → LLM → TTS legs still collapse under one row via the
+        // shared `trace_id`.
+        let (event_stage_name, event_target) = if results.len() == 1 {
+            let only = &results[0];
+            (
+                Some(only.stage.clone()),
+                Some(only.routing_decision.target.to_string()),
+            )
+        } else {
+            (self.name.clone(), None)
+        };
+
         let event = crate::telemetry::TelemetryEvent {
             event_type: "PipelineComplete".to_string(),
-            stage_name: self.name.clone(),
-            target: None,
+            stage_name: event_stage_name,
+            target: event_target,
             latency_ms: Some(total_latency_ms),
             error: None,
             data: Some(
@@ -1032,6 +1052,10 @@ impl Pipeline {
             // Collect runtime metrics from device
             let metrics = DeviceMetrics::default();
 
+            // RAII pipeline context — see sync `run` for rationale.
+            // Drops on every exit path (success, `?` error, panic) and
+            // replaces the manual `set_telemetry_pipeline_context(None, None)`
+            // cleanup the previous shape needed at every branch.
             let trace_id = uuid::Uuid::new_v4();
             let pipeline_id = name
                 .as_ref()
@@ -1068,8 +1092,6 @@ impl Pipeline {
             })?;
             let total_latency_ms = start_time.elapsed().as_millis() as u32;
 
-            // Defer clearing context until after the PipelineComplete publish
-            // so direct SDK telemetry still carries this run's IDs.
             let stages: Vec<StageTiming> = results
                 .iter()
                 .map(|result| StageTiming {
@@ -1094,11 +1116,6 @@ impl Pipeline {
                 )
             };
 
-            // Emit PipelineComplete telemetry event. Previously absent from
-            // this async path (existed only in sync `run`); attaching now
-            // brings the two paths to parity. LLM metrics ride on span
-            // metadata (see the sync arm above for rationale), so this
-            // `data` blob stays compact.
             let stage_data: Vec<serde_json::Value> = results
                 .iter()
                 .map(|result| {
@@ -1110,10 +1127,23 @@ impl Pipeline {
                 })
                 .collect();
 
+            // Single-stage pipelines attribute the row to the inner
+            // stage so the Traces dashboard reads `pipeline / <stage>`
+            // with a real `target`; see sync `run` above.
+            let (event_stage_name, event_target) = if results.len() == 1 {
+                let only = &results[0];
+                (
+                    Some(only.stage.clone()),
+                    Some(only.routing_decision.target.to_string()),
+                )
+            } else {
+                (name.clone(), None)
+            };
+
             let event = crate::telemetry::TelemetryEvent {
                 event_type: "PipelineComplete".to_string(),
-                stage_name: name.clone(),
-                target: None,
+                stage_name: event_stage_name,
+                target: event_target,
                 latency_ms: Some(total_latency_ms),
                 error: None,
                 data: Some(
