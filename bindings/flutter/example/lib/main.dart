@@ -11,7 +11,7 @@ class XybridDemo extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: "Xybird Demo App",
+      title: "Xybrid Demo App",
       home: const DemoHomePage(),
     );
   }
