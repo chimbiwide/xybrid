@@ -1,0 +1,61 @@
+import 'package:flutter/material.dart';
+import 'package:xybrid_flutter/xybrid_flutter.dart';
+
+void main() {
+  runApp(const XybridDemo());
+}
+
+class XybridDemo extends StatelessWidget {
+  const XybridDemo({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: "Xybird Demo App",
+      home: const DemoHomePage(),
+    );
+  }
+}
+
+class DemoHomePage extends StatefulWidget {
+  const DemoHomePage({super.key});
+
+  @override
+  State<DemoHomePage> createState() => DemoHomePageState();
+}
+
+class DemoHomePageState extends State<DemoHomePage> {
+  String status = "Starting Xybrid...";
+
+  @override
+  void initState() {
+    super.initState();
+    initAndLoad();
+  }
+
+  Future<void> initAndLoad() async {
+    try {
+      setState(() => status = "Initializing Xybrid");
+      await Xybrid.init();
+
+      if (!mounted) return;
+      setState(() => status = "Loading whisper tiny");
+      await XybridModelLoader.fromRegistry('whisper-tiny').load();
+
+      if (!mounted) return;
+      setState(() => status = "Whisper loaded");
+    } on XybridException catch (e) {
+      if (!mounted) return;
+      setState(() => status = "Error: ${e.message}");
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text("Xybrid Demo App")),
+      body: Center(child: Text(status)),
+    );
+  }
+}
+
