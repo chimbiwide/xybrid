@@ -25,7 +25,7 @@ class DemoHomePage extends StatefulWidget {
 }
 
 class DemoHomePageState extends State<DemoHomePage> {
-  String status = "Starting Xybrid...";
+  String status = "Initializing Xybrid...";
 
   @override
   void initState() {
@@ -35,7 +35,6 @@ class DemoHomePageState extends State<DemoHomePage> {
 
   Future<void> initAndLoad() async {
     try {
-      setState(() => status = "Initializing Xybrid");
       await Xybrid.init();
 
       if (!mounted) return;
