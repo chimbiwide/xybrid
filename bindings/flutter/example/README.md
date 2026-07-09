@@ -8,4 +8,4 @@ It demonstrates initializing Xybrid and loading a speech-to-text model (`whisper
 
 ### Full Example App
 
-The complete Flutter example app with 8 demo screens can be found at:https://github.com/xybrid-ai/xybrid/tree/master/examples/flutter 
+The complete Flutter example app with 8 demo screens can be found at: https://github.com/xybrid-ai/xybrid/tree/master/examples/flutter 
