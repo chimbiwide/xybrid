@@ -44,9 +44,10 @@ class DemoHomePageState extends State<DemoHomePage> {
 
       if (!mounted) return;
       setState(() => status = "Whisper loaded");
-    } on XybridException catch (e) {
+    } catch (e) {
       if (!mounted) return;
-      setState(() => status = "Error: ${e.message}");
+      final message = e is XybridException ? e.message : e.toString();
+      setState(() => status = "Error: $message");
     }
   }
 
