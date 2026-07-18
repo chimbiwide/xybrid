@@ -934,6 +934,68 @@ fn select_gguf_variant(gguf_files: &[&str], variant: Option<&str>) -> SdkResult<
         .to_string())
 }
 
+fn select_huggingface_files_to_download<'a>(
+    repo: &str,
+    all_filenames: &[&'a str],
+    selected_gguf: Option<&str>,
+    selected_projector: Option<&str>,
+) -> SdkResult<Vec<&'a str>> {
+    let gguf_files: Vec<&str> = all_filenames
+        .iter()
+        .filter(|filename| filename.ends_with(".gguf") && !is_gguf_companion(filename))
+        .copied()
+        .collect();
+
+    let has_native_model = all_filenames.iter().any(|filename| {
+        filename.ends_with(".gguf")
+            || filename.ends_with(".onnx")
+            || filename.ends_with(".safetensors")
+    });
+    let has_browser_only_model = all_filenames
+        .iter()
+        .any(|filename| filename.ends_with(".tflite") || filename.ends_with(".litertlm"));
+
+    if has_browser_only_model && !has_native_model {
+        return Err(SdkError::load(format!(
+            "HuggingFace repo '{}' contains only .tflite and/or .litertlm model files. \
+             TFLite and LiteRT-LM models run in the browser SDK (@xybrid/web); no native \
+             TFLite/LiteRT-LM runtime is registered",
+            repo
+        )));
+    }
+
+    Ok(all_filenames
+        .iter()
+        .filter(|filename| {
+            if filename.starts_with('.') || filename.ends_with('/') {
+                return false;
+            }
+
+            if filename.ends_with(".tflite") || filename.ends_with(".litertlm") {
+                return false;
+            }
+
+            if filename.ends_with(".gguf") && is_gguf_companion(filename) {
+                return selected_projector == Some(**filename);
+            }
+
+            if let Some(selected) = selected_gguf {
+                if filename.ends_with(".gguf") && **filename != selected {
+                    return false;
+                }
+            }
+
+            let dominated_by_model = selected_gguf.is_some() || gguf_files.len() == 1;
+            if dominated_by_model {
+                ModelLoader::is_essential_file(filename)
+            } else {
+                true
+            }
+        })
+        .copied()
+        .collect())
+}
+
 #[derive(Debug, Clone)]
 pub struct ModelLoader {
     source: ModelSource,
@@ -1091,9 +1153,11 @@ impl ModelLoader {
     /// Create loader from a HuggingFace Hub repository.
     ///
     /// Downloads model files from the HuggingFace Hub and caches them locally.
-    /// Subsequent calls use the cached files. The repository must contain a
-    /// `model_metadata.json` for the model to be loadable (auto-generation
-    /// is planned for a future version).
+    /// Subsequent calls use the cached files. When the repository does not ship
+    /// a `model_metadata.json`, one is auto-generated from the model card and
+    /// native model files (.onnx, .gguf, .safetensors). Browser-only formats
+    /// (.tflite, .litertlm) are rejected before download — they run via the
+    /// `@xybrid/web` SDK.
     ///
     /// Requires the `huggingface` feature flag at load time.
     /// The constructor itself is always available, but `load()` will return
@@ -1516,38 +1580,15 @@ impl ModelLoader {
             );
         }
 
+        let files_to_download = select_huggingface_files_to_download(
+            repo,
+            &all_filenames,
+            selected_gguf.as_deref(),
+            selected_projector,
+        )?;
+
         // Create cache directory
         std::fs::create_dir_all(&cache_dir)?;
-
-        // Filter to only files we need
-        let files_to_download: Vec<&str> = all_filenames
-            .iter()
-            .filter(|filename| {
-                // Skip hidden files and directories
-                if filename.starts_with('.') || filename.ends_with('/') {
-                    return false;
-                }
-
-                if filename.ends_with(".gguf") && is_gguf_companion(filename) {
-                    return selected_projector == Some(*filename);
-                }
-
-                if let Some(ref selected) = selected_gguf {
-                    if filename.ends_with(".gguf") && **filename != *selected {
-                        return false;
-                    }
-                }
-
-                // Skip non-essential files (LICENSE, subdirectories like leap/)
-                let dominated_by_model = selected_gguf.is_some() || gguf_files.len() == 1;
-                if dominated_by_model {
-                    Self::is_essential_file(filename)
-                } else {
-                    true
-                }
-            })
-            .copied()
-            .collect();
 
         let total_files = files_to_download.len();
         for (i, filename) in files_to_download.iter().enumerate() {
@@ -1708,6 +1749,7 @@ impl ModelLoader {
             .map_err(|e| SdkError::load_src("Failed to read model_metadata.json", e))?;
         let metadata: ModelMetadata = serde_json::from_str(&metadata_str)
             .map_err(|e| SdkError::load_src("Failed to parse metadata", e))?;
+        Self::validate_native_execution_template(&metadata)?;
 
         // Create executor with base path
         let executor = TemplateExecutor::with_base_path(model_dir.to_str().unwrap_or("."));
@@ -1718,6 +1760,20 @@ impl ModelLoader {
             model_dir: model_dir.clone(),
             loaded: true,
         })
+    }
+
+    fn validate_native_execution_template(metadata: &ModelMetadata) -> SdkResult<()> {
+        let browser_format = match &metadata.execution_template {
+            ExecutionTemplate::TfLite { .. } => "TFLite",
+            ExecutionTemplate::LiteRtLm { .. } => "LiteRT-LM",
+            _ => return Ok(()),
+        };
+
+        Err(SdkError::load(format!(
+            "Model '{}' uses the browser-only {} format. TFLite and LiteRT-LM models run in the \
+             browser SDK (@xybrid/web); no native TFLite/LiteRT-LM runtime is registered",
+            metadata.model_id, browser_format
+        )))
     }
 
     fn is_llm_template(metadata: &ModelMetadata) -> bool {
@@ -3552,6 +3608,174 @@ impl Clone for XybridModel {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn browser_only_model_files_are_not_essential() {
+        assert!(!ModelLoader::is_essential_file("model.tflite"));
+        assert!(!ModelLoader::is_essential_file("model.litertlm"));
+    }
+
+    #[test]
+    fn huggingface_gguf_repo_selection_is_unchanged() {
+        let filenames = [
+            "model-Q4_K_M.gguf",
+            "model-Q8_0.gguf",
+            "config.json",
+            "README.md",
+            "LICENSE",
+        ];
+
+        let files = select_huggingface_files_to_download(
+            "org/model",
+            &filenames,
+            Some("model-Q4_K_M.gguf"),
+            None,
+        )
+        .expect("GGUF repository selection should succeed");
+
+        assert_eq!(files, vec!["model-Q4_K_M.gguf", "config.json", "README.md"]);
+    }
+
+    #[test]
+    fn huggingface_vision_repo_downloads_selected_projector() {
+        let filenames = [
+            "model-Q4_K_M.gguf",
+            "mmproj-model-f16.gguf",
+            "config.json",
+            "README.md",
+        ];
+
+        let files = select_huggingface_files_to_download(
+            "org/model",
+            &filenames,
+            Some("model-Q4_K_M.gguf"),
+            Some("mmproj-model-f16.gguf"),
+        )
+        .expect("vision repository selection should succeed");
+
+        assert_eq!(
+            files,
+            vec![
+                "model-Q4_K_M.gguf",
+                "mmproj-model-f16.gguf",
+                "config.json",
+                "README.md"
+            ]
+        );
+    }
+
+    #[test]
+    fn huggingface_litertlm_only_repo_fails_before_download() {
+        let filenames = ["model.litertlm", "README.md"];
+
+        let error =
+            select_huggingface_files_to_download("litert-community/gemma", &filenames, None, None)
+                .expect_err("LiteRtLm-only repositories must be rejected");
+        let message = error.to_string();
+
+        assert!(message.contains("litert-community/gemma"));
+        assert!(message.contains("only .tflite and/or .litertlm model files"));
+        assert!(message.contains("browser SDK (@xybrid/web)"));
+        assert!(message.contains("no native TFLite/LiteRT-LM runtime is registered"));
+    }
+
+    #[test]
+    fn huggingface_mixed_repo_excludes_litertlm() {
+        let filenames = ["model.gguf", "model.litertlm", "README.md", "LICENSE"];
+
+        let files = select_huggingface_files_to_download("org/model", &filenames, None, None)
+            .expect("mixed native and browser-only repository should succeed");
+
+        assert_eq!(files, vec!["model.gguf", "README.md"]);
+    }
+
+    #[test]
+    fn huggingface_tflite_only_repo_fails_before_download() {
+        let filenames = ["model.tflite", "README.md", "LICENSE"];
+
+        let error = select_huggingface_files_to_download("org/model", &filenames, None, None)
+            .expect_err("TFLite-only repositories must be rejected");
+        let message = error.to_string();
+
+        assert!(message.contains("org/model"));
+        assert!(message.contains("only .tflite and/or .litertlm model files"));
+        assert!(message.contains("browser SDK (@xybrid/web)"));
+        assert!(message.contains("no native TFLite/LiteRT-LM runtime is registered"));
+    }
+
+    #[test]
+    fn huggingface_tflite_and_litertlm_only_repo_fails_before_download() {
+        let filenames = ["model.tflite", "model.litertlm", "README.md"];
+
+        let error =
+            select_huggingface_files_to_download("org/browser-model", &filenames, None, None)
+                .expect_err("TFLite and LiteRT-LM-only repositories must be rejected");
+        let message = error.to_string();
+
+        assert!(message.contains("org/browser-model"));
+        assert!(message.contains("only .tflite and/or .litertlm model files"));
+        assert!(message.contains("browser SDK (@xybrid/web)"));
+        assert!(message.contains("no native TFLite/LiteRT-LM runtime is registered"));
+    }
+
+    #[test]
+    fn huggingface_mixed_repo_excludes_tflite() {
+        let filenames = ["model.gguf", "model.tflite", "README.md", "LICENSE"];
+
+        let files = select_huggingface_files_to_download("org/model", &filenames, None, None)
+            .expect("mixed native and browser-only repository should succeed");
+
+        assert_eq!(files, vec!["model.gguf", "README.md"]);
+    }
+
+    #[test]
+    fn huggingface_hidden_files_are_skipped() {
+        let filenames = ["model.gguf", ".gitattributes", "subdir/", "README.md"];
+
+        let files = select_huggingface_files_to_download("org/model", &filenames, None, None)
+            .expect("repository selection should succeed");
+
+        assert_eq!(files, vec!["model.gguf", "README.md"]);
+    }
+
+    #[test]
+    fn create_model_handle_rejects_browser_only_templates_at_load_time() {
+        let templates = [
+            (
+                "TFLite",
+                ExecutionTemplate::TfLite {
+                    model_file: "model.tflite".to_string(),
+                },
+            ),
+            (
+                "LiteRT-LM",
+                ExecutionTemplate::LiteRtLm {
+                    model_file: "model.litertlm".to_string(),
+                    context_length: None,
+                },
+            ),
+        ];
+
+        for (format, template) in templates {
+            let temp_dir = tempfile::tempdir().expect("temporary model directory should exist");
+            let mut metadata = ModelMetadata::onnx("browser-only-model", "1.0", "model.bin");
+            metadata.execution_template = template;
+            let metadata_json =
+                serde_json::to_string(&metadata).expect("model metadata should serialize");
+            std::fs::write(temp_dir.path().join("model_metadata.json"), metadata_json)
+                .expect("model metadata should be written");
+
+            let error = match ModelLoader::create_model_handle(&temp_dir.path().to_path_buf()) {
+                Ok(_) => panic!("{format} metadata must be rejected during load"),
+                Err(error) => error,
+            };
+            let message = error.to_string();
+
+            assert!(message.contains(&format!("browser-only {format} format")));
+            assert!(message.contains("browser SDK (@xybrid/web)"));
+            assert!(message.contains("no native TFLite/LiteRT-LM runtime is registered"));
+        }
+    }
 
     /// Serializes the tests that mutate the process-global speculative flag so
     /// they don't observe each other's writes within the test binary.
