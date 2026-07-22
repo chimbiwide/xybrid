@@ -579,6 +579,38 @@ impl ConversationContextHandle {
         self.lock().id().to_string()
     }
 
+    /// Number of history turns (excludes the system envelope).
+    pub fn history_len(&self) -> u32 {
+        self.lock().history().len() as u32
+    }
+
+    /// Whether a persistent system envelope is set.
+    pub fn has_system(&self) -> bool {
+        self.lock().system_envelope().is_some()
+    }
+
+    /// Set the max history length before FIFO pruning.
+    ///
+    /// Rebuilds the context and re-pushes history so pruning runs immediately
+    /// (matches the pre-bolt C ABI). `with_max_history_len` alone only changes
+    /// the cap; the SDK prunes on `push`, so a lower cap wouldn't trim existing
+    /// turns until the next push.
+    pub fn set_max_history_len(&self, len: u32) {
+        let mut guard = self.lock();
+        let id = guard.id().to_string();
+        let system = guard.system_envelope().cloned();
+        let history: Vec<_> = guard.history().to_vec();
+
+        let mut new_ctx = sdk::ConversationContext::with_id(id).with_max_history_len(len as usize);
+        if let Some(sys) = system {
+            new_ctx = new_ctx.with_system(sys);
+        }
+        for envelope in history {
+            new_ctx.push(envelope);
+        }
+        *guard = new_ctx;
+    }
+
     pub fn history(&self) -> Vec<Envelope> {
         self.lock()
             .history()

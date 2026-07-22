@@ -74,16 +74,18 @@ namespace Xybrid
                     return;
                 }
 
+                // Runtime init moves to bolt: set the binding tag (used for
+                // telemetry attribution). The pre-bolt xybrid_init() was a no-op.
+                XybridBolt.XybridBolt.SetBinding("unity");
+
+                // Dual-library window: advanced telemetry still runs through the
+                // pre-bolt C ABI (GAP-3), which keeps its OWN binding state. Set
+                // it too so xybrid_ffi telemetry reports "unity", not the default.
+                // Drop this once telemetry is ported off xybrid_ffi in A2.2.
                 byte[] bindingBytes = NativeHelpers.ToUtf8Bytes("unity");
                 fixed (byte* bindingPtr = bindingBytes)
                 {
                     NativeMethods.xybrid_set_binding(bindingPtr);
-                }
-
-                int result = NativeMethods.xybrid_init();
-                if (result != 0)
-                {
-                    NativeHelpers.ThrowLastError("Failed to initialize Xybrid SDK");
                 }
 
                 _initialized = true;
@@ -166,12 +168,21 @@ namespace Xybrid
         }
 
         /// <summary>
-        /// Convenience method to load a model from a raw GGUF file.
-        /// Auto-generates metadata from the GGUF binary header.
+        /// Convenience method to load a model from a raw GGUF file
+        /// (auto-generates metadata from the GGUF header).
         /// </summary>
+        /// <remarks>
+        /// Not yet available on the bolt backend — this throws
+        /// <see cref="NotSupportedException"/>. Use <see cref="LoadModel"/>,
+        /// <see cref="LoadModelFromBundle"/>, or <see cref="ModelLoader.FromDirectory"/>
+        /// with a directory containing model_metadata.json instead.
+        /// </remarks>
         /// <param name="filePath">Path to the GGUF model file.</param>
         /// <returns>A loaded model ready for inference.</returns>
-        /// <exception cref="XybridException">Thrown if loading fails.</exception>
+        /// <exception cref="NotSupportedException">
+        /// GGUF auto-metadata loading is not yet available on the bolt backend.
+        /// </exception>
+        /// <exception cref="XybridException">Thrown if loading otherwise fails.</exception>
         public static Model LoadModelFromFile(string filePath)
         {
             using (var loader = ModelLoader.FromModelFile(filePath))
