@@ -38,6 +38,7 @@ on:
       - "vendor/ort-macos/**"
       - "Cargo.toml"
       - "Cargo.lock"
+      - "tools/unity-runtime-smoke/**"
       - ".github/workflows/bazel.yml"
   workflow_dispatch:
 
@@ -71,7 +72,7 @@ jobs:
           FILES=$(gh api --paginate \
             "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" \
             --jq '.[].filename')
-          if printf '%s\n' "$FILES" | grep -qE '^(MODULE\.bazel|\.bazelrc|\.bazelversion|\.bazelignore|BUILD\.bazel|.*/BUILD\.bazel|rules_android_ndk\.patch|rules_foreign_cc\.patch|rules_rs\.patch|hermetic_llvm\.patch|crates/|bindings/kotlin/|macros/|vendor/llama-cpp|vendor/ort-macos/|Cargo\.toml|Cargo\.lock|\.github/workflows/bazel\.yml)'; then
+          if printf '%s\n' "$FILES" | grep -qE '^(MODULE\.bazel|\.bazelrc|\.bazelversion|\.bazelignore|BUILD\.bazel|.*/BUILD\.bazel|rules_android_ndk\.patch|rules_foreign_cc\.patch|rules_rs\.patch|hermetic_llvm\.patch|crates/|bindings/kotlin/|macros/|vendor/llama-cpp|vendor/ort-macos/|Cargo\.toml|Cargo\.lock|tools/unity-runtime-smoke/|\.github/workflows/bazel\.yml)'; then
             REL=true
           else
             REL=false
@@ -443,3 +444,13 @@ jobs:
       - name: Run managed C# smoke (load DLL + boltffi P/Invoke)
         shell: bash
         run: ./tools/windows-smoke/bin/Release/net8.0/xybrid-bolt-smoke.exe
+
+  # The Windows Unity 6.3 EditMode + IL2CPP player smoke runs as a ONE-TIME
+  # MANUAL validation — NOT as a hosted-runner CI lane. Unity licensing on
+  # ephemeral GitHub-hosted Windows runners is not viable: service accounts
+  # cannot activate Editor licenses, and a locally-activated .ulf is
+  # machine-bound ("Machine bindings don't match" on a fresh image). The
+  # reusable smoke project under tools/unity-runtime-smoke/ is committed here
+  # so it can be driven once on a Windows box that's already Unity-licensed;
+  # the build-unity.yml cargo->Bazel flip is gated on that manual sign-off.
+  # See tools/unity-runtime-smoke/README.md for the exact commands.
