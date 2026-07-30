@@ -222,7 +222,7 @@ kotlin/
 
 The SDK bundles ONNX Runtime (`libonnxruntime.so`) and the C++ shared library (`libc++_shared.so`) alongside `libxybrid-bolt.so`. These are included automatically in the AAR — no manual setup required.
 
-> **Note:** `libxybrid-bolt.so` is a build output and is **not** committed to the repository. The AAR published to Maven Central includes it (built in CI). For a **local** build, generate it first with `cargo xtask build-android` (see [Building Native Libraries](#building-native-libraries) below) so `libs/<abi>/` is populated before running `./gradlew`.
+> **Note:** `libxybrid-bolt.so` is a build output and is **not** committed to the repository. The AAR published to Maven Central includes it (built in CI). For a **local** build, build the Bazel AAR and stage its jniLibs (see [Building Native Libraries](#building-native-libraries) below) so `libs/<abi>/` is populated before running `./gradlew`.
 
 | Library | Purpose | Source |
 |---------|---------|--------|
@@ -230,7 +230,7 @@ The SDK bundles ONNX Runtime (`libonnxruntime.so`) and the C++ shared library (`
 | `libonnxruntime.so` | ONNX Runtime inference engine | Vendored at `vendor/ort-android/` |
 | `libc++_shared.so` | C++ standard library runtime | Vendored at `vendor/ort-android/` |
 
-ORT libraries are symlinked from the shared `vendor/ort-android/` directory (matching the iOS pattern with `vendor/ort-ios/`). When building with `cargo xtask build-android`, ORT libraries are automatically copied to the output directory.
+The Bazel AAR bundles the ORT libraries into `jni/<abi>/` automatically, so staging its jniLibs populates everything Gradle needs.
 
 ## FFI Strategy
 
@@ -244,79 +244,31 @@ Native `.so` files must be built for each target architecture before the library
 
 ### Prerequisites
 
-| Tool | Required Version | Installation |
-|------|------------------|--------------|
-| Rust | 1.70+ | [rustup.rs](https://rustup.rs) |
-| Android NDK | r26+ (recommended: r26b) | Android Studio or sdkmanager |
-| cargo-ndk | Latest | `cargo install cargo-ndk` |
-
-### Installing Android NDK
-
-**Option 1: Android Studio (Recommended)**
-
-1. Open Android Studio
-2. Go to **Tools > SDK Manager**
-3. Select **SDK Tools** tab
-4. Check **NDK (Side by side)** and click Apply
-5. Note the installation path (e.g., `$ANDROID_HOME/ndk/26.1.10909125`)
-
-**Option 2: Command Line (sdkmanager)**
-
-```bash
-# Install NDK via sdkmanager
-sdkmanager --install "ndk;26.1.10909125"
-
-# Find your SDK location
-echo $ANDROID_HOME
-# Typically: ~/Library/Android/sdk (macOS) or ~/Android/Sdk (Linux)
-```
-
-### Environment Variables
-
-Set these environment variables before building:
-
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `ANDROID_HOME` | Android SDK root directory | `~/Library/Android/sdk` |
-| `ANDROID_NDK_HOME` | NDK installation directory | `$ANDROID_HOME/ndk/26.1.10909125` |
-
-Add to your shell profile (`~/.bashrc`, `~/.zshrc`, etc.):
+The recommended Bazel path below needs **only Bazel** (install via
+[bazelisk](https://github.com/bazelbuild/bazelisk)) — it downloads its own
+Rust toolchain, Android targets, and NDK. The Android SDK (`ANDROID_HOME`)
+is required only for the Gradle steps (assembling / publishing the AAR):
 
 ```bash
 export ANDROID_HOME="$HOME/Library/Android/sdk"  # macOS
 # export ANDROID_HOME="$HOME/Android/Sdk"        # Linux
-export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/26.1.10909125"
-export PATH="$PATH:$ANDROID_HOME/cmdline-tools/latest/bin"
 ```
 
-### Installing Rust Targets
-
-```bash
-# From the xybrid repo root
-cargo xtask setup-targets
-
-# Or manually:
-rustup target add aarch64-linux-android      # arm64-v8a
-rustup target add armv7-linux-androideabi    # armeabi-v7a
-rustup target add x86_64-linux-android       # x86_64
-```
+The manual cargo build (below) additionally needs the Android NDK (r26+,
+`ANDROID_NDK_HOME`) and the rustup Android targets.
 
 ### Building
 
-**Using xtask (Recommended)**
+**Using Bazel (Recommended)**
+
+Builds every ABI (the AAR always ships the full set) and needs no local NDK or
+rustup targets — Bazel downloads its own pinned toolchains. From the repo root:
 
 ```bash
-# Build all ABIs
-cargo xtask build-android
-
-# Build specific ABI only
-cargo xtask build-android --abi arm64-v8a
-
-# Debug build (with symbols, unoptimized)
-cargo xtask build-android --debug
-
-# With explicit version
-cargo xtask build-android --version 0.2.0
+bazel build -c opt //bindings/kotlin:xybrid_kotlin_aar
+rm -rf bindings/kotlin/libs && mkdir -p bindings/kotlin/libs /tmp/aar
+unzip -o -q bazel-bin/bindings/kotlin/xybrid-kotlin.aar 'jni/*' -d /tmp/aar
+cp -r /tmp/aar/jni/* bindings/kotlin/libs/
 ```
 
 **Manual Build (without cargo-ndk)**
@@ -381,7 +333,7 @@ export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/26.1.10909125"
 
 **Cause**: Missing Rust target.
 
-**Fix**: Run `cargo xtask setup-targets` or `rustup target add aarch64-linux-android`
+**Fix**: Build via Bazel (see Building above) — it provides its own Rust toolchain and Android targets
 
 #### "error: could not find 'cargo-ndk'"
 
@@ -410,7 +362,7 @@ export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/26.1.10909125"
 **Fix**:
 1. Verify the .so file is valid: `file libs/arm64-v8a/libxybrid-bolt.so`
 2. Should show: `ELF 64-bit LSB shared object, ARM aarch64`
-3. Rebuild with `cargo xtask build-android`
+3. Rebuild the Bazel AAR and restage its jniLibs (see Building Native Libraries above)
 
 ### Platform Notes
 

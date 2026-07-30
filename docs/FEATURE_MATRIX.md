@@ -201,8 +201,8 @@ Run on each target host (or in CI matrix jobs). Each row matches what the releas
 | Platform | Build host | Canonical gate |
 |---------|-----------|---------|
 | macOS arm64 / x86_64 | macOS | `cargo clippy --workspace --features platform-macos -- -D warnings` + `cargo test --workspace --features platform-macos` |
-| iOS arm64 + simulator | macOS | `cargo xtask build-xcframework --release` (cross-compiles `xybrid-uniffi` for `aarch64-apple-ios`, `aarch64-apple-ios-sim`, `x86_64-apple-ios`). See [`.github/workflows/build-apple.yml`](../.github/workflows/build-apple.yml) for the CI variant including the vision matrix job. |
-| Android arm64-v8a / armeabi-v7a / x86_64 | Linux or macOS with NDK | `cargo xtask build-android --release` (drives `cargo ndk` against `xybrid-uniffi` for all three ABIs). See [`.github/workflows/build-android.yml`](../.github/workflows/build-android.yml) for the matrix-parallelised CI variant. |
+| iOS arm64 + simulator | macOS | `bazel build --config=ios //bindings/apple:XybridFFI` (rules_apple xcframework, device + simulator slices). See [`.github/workflows/build-apple.yml`](../.github/workflows/build-apple.yml) for the CI variant. |
+| Android arm64-v8a / armeabi-v7a / x86_64 | Any (Bazel downloads its own NDK) | `bazel build -c opt //bindings/kotlin:xybrid_kotlin_aar` (feature-complete 3-ABI AAR). See [`.github/workflows/build-android.yml`](../.github/workflows/build-android.yml) for the CI variant. |
 | Desktop Linux x86_64 | Linux | `cargo clippy --workspace --features platform-desktop -- -D warnings` + `cargo test --workspace --features platform-desktop` |
 | Desktop Windows x86_64 | Windows | same as Linux desktop |
 
@@ -268,19 +268,12 @@ The `xtask` crate provides build automation commands. Run `cargo xtask --help` f
 | Command | Purpose | Platform | Example |
 |---------|---------|----------|---------|
 | `setup-test-env` | Download models for integration tests | Any | `cargo xtask setup-test-env` |
-| `build-xcframework` | Build Apple XCFramework via boltffi (Swift bindings + xcframework) | macOS only | `cargo xtask build-xcframework --release` |
-| `build-android` | Build Android .so files | Any | `cargo xtask build-android --release` |
 | `build-flutter` | Build Flutter native libraries | Varies | `cargo xtask build-flutter --platform macos` |
-| `setup-targets` | Install Rust cross-compilation targets | Any | `cargo xtask setup-targets` |
-| `build-all` | Build all platforms | Varies | `cargo xtask build-all --release` |
-| `package` | Package artifacts for distribution | Any | `cargo xtask package --version 0.2.0` |
 
 ### xtask to Feature Preset Mapping
 
 | xtask Command | Platform Preset Used | Targets Built |
 |---------------|---------------------|---------------|
-| `build-xcframework` | `platform-macos` / `platform-ios` | iOS arm64, iOS Simulator (arm64, x86_64), macOS (arm64, x86_64) |
-| `build-android` | `platform-android` | arm64-v8a, armeabi-v7a, x86_64 |
 | `build-flutter --platform ios` | `platform-ios` | aarch64-apple-ios, aarch64-apple-ios-sim |
 | `build-flutter --platform android` | `platform-android` | aarch64-linux-android, armv7-linux-androideabi, x86_64-linux-android |
 | `build-flutter --platform macos` | `platform-macos` | aarch64-apple-darwin, x86_64-apple-darwin |
@@ -327,54 +320,6 @@ Xybrid uses a **two-layer build architecture**:
 - The `llama-cpp-sys/bindings` feature, reached through `xybrid-core/llm-llamacpp`
 - Cargo's build process when llm-llamacpp is compiled
 
-### NDK Detection Duplication
-
-Both xtask and build.rs need to detect the Android NDK:
-
-| Component | Purpose | Environment Variables Checked |
-|-----------|---------|------------------------------|
-| **xtask** | Locate NDK for `cargo-ndk` invocation | `ANDROID_NDK_HOME`, checks for `cargo ndk --version` |
-| **llama-cpp-sys build.rs** | Locate NDK for CMake toolchain file | `ANDROID_NDK_HOME`, `NDK_HOME`, `CC_*`, `ANDROID_HOME`, `ANDROID_SDK_ROOT`, common paths |
-
-This duplication exists because:
-1. xtask runs **before** cargo builds the crate
-2. build.rs runs **during** the cargo build
-3. cargo-ndk sets up the Rust cross-compiler but doesn't pass NDK location to CMake
-
-### Build Flow Diagram
-
-```
-User runs: cargo xtask build-android --release
-
-┌─────────────────────────────────────────────────────────────┐
-│ xtask (Orchestration)                                       │
-├─────────────────────────────────────────────────────────────┤
-│ 1. Parse command-line arguments                             │
-│ 2. Detect NDK (for cargo-ndk)                               │
-│ 3. For each ABI (arm64-v8a, armeabi-v7a, x86_64):           │
-│    └─ Run: cargo ndk --target <rust-target> build           │
-│       ├─ cargo-ndk sets CC/CXX environment variables        │
-│       └─ cargo-ndk invokes cargo build                      │
-│ 4. Copy .so files to bindings/kotlin/libs/                  │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│ llama-cpp-sys build.rs (Compilation) - runs for each target │
-├─────────────────────────────────────────────────────────────┤
-│ 1. Runs when llama-cpp-sys/bindings is enabled              │
-│ 2. If enabled:                                              │
-│    a. Find Android NDK (from CC env var or ANDROID_NDK_HOME)│
-│    b. Configure CMake with NDK toolchain file               │
-│    c. Build llama.cpp static libraries                      │
-│    d. Build wrapper.cpp                                     │
-│    e. Output cargo:rustc-link-lib directives                │
-│ 3. Cargo links everything together                          │
-└─────────────────────────────────────────────────────────────┘
-```
-
----
-
 ## Quick Reference
 
 ### Minimal Build (No LLM)
@@ -398,8 +343,8 @@ cargo build -p xybrid-core --features "ort-download,ort-coreml,llm-llamacpp-visi
 ### Android Build
 
 ```bash
-# Requires: Android NDK, cargo-ndk
-cargo xtask build-android --release
+# Bazel downloads its own pinned NDK — no machine setup
+bazel build -c opt //bindings/kotlin:xybrid_kotlin_aar
 ```
 
 ### Full Feature Check
