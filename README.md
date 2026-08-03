@@ -166,7 +166,7 @@ dependencies {
 **Run a model:**
 
 ```kotlin
-val model = XybridModelLoader.fromRegistry("kokoro-82m").load()
+val model = XybridModel("kokoro-82m")
 val result = model.run(Envelope.text("Hello world"))
 // result → 24kHz WAV audio
 ```

@@ -178,7 +178,7 @@ dependencies {
 **运行模型：**
 
 ```kotlin
-val model = XybridModelLoader.fromRegistry("kokoro-82m").load()
+val model = XybridModel("kokoro-82m)
 val result = model.run(Envelope.text("国破山河在，城春草木深"))
 // 输出 → 24kHz WAV 音频
 ```
