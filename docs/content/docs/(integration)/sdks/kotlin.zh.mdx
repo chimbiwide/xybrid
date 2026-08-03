@@ -48,7 +48,7 @@ class InferenceRepository {
     private val dispatcher = Dispatchers.IO
 
     suspend fun loadModel(modelId: String): XybridModel = withContext(dispatcher) {
-        XybridModelLoader.fromRegistry(modelId).load()
+        XybridModel(modelId)
     }
 
     suspend fun runInference(
@@ -72,12 +72,8 @@ fun InferenceScreen() {
     Button(onClick = {
         scope.launch {
             isLoading = true
-            val model = withContext(Dispatchers.IO) {
-                XybridModelLoader.fromRegistry("kokoro-82m").load()
-            }
-            result = withContext(Dispatchers.IO) {
-                model.run(Envelope.text("Hello from Compose!"))
-            }
+            val model = XybridModel.fromRegistryAsync("kokoro-82m")
+            result = model.runAsync(Envelope.text("Hello from Compose!"))
             isLoading = false
         }
     }) {
@@ -97,10 +93,17 @@ SDK 提供与完整限定名对应的短别名：
 
 | 别名 | 完整类型 |
 |-------|-----------|
-| `ModelLoader` | `XybridModelLoader` |
 | `Model` | `XybridModel` |
-| `Envelope` | `XybridEnvelope` |
 | `Result` | `XybridResult` |
-| `XybridError` | `XybridException` |
+| `VoiceInfo` | `XybridVoiceInfo` |
+| `GenerationConfig` | `XybridGenerationConfig` |
+| `XybridException` | `XybridError` |
+
+`Envelope` 不是别名 -- 它就是个带工厂方法的类
+(`Envelope.text(...)`, `Envelope.image(...)`, `Envelope.userMessage(...)`) 会返回 `XybridEnvelope`.
+
+`ModelLoader` 类型已弃用。
+通过 `XybridModel(id)` 直接从注册表加载模型，或者使用 `XybridModel.fromBundle` / `fromDirectory` / `fromHuggingface`。
+已弃用的 `XybridModelLoader` 兼容层可让 0.4.0 之前的代码继续编译，并将在 0.5.0 中移除。
 
 完整 API 参考请见 [Android SDK 指南](/zh/docs/sdks/android)。

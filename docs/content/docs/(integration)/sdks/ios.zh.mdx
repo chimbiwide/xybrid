@@ -28,6 +28,12 @@ dependencies: [
 ```swift
 import Xybrid
 
+@main
+struct MyApp: App {
+    init() { Xybrid.initialize() }
+    var body: some Scene{ /* ... */}
+}
+
 // 从注册表加载模型
 let loader = ModelLoader.fromRegistry(modelId: "kokoro-82m")
 let model = try loader.load()
@@ -41,6 +47,8 @@ if result.success {
     print("Latency: \(result.latency)s")
 }
 ```
+
+在 iOS 上，`Xybrid.initialize()` 会启用 `UIDevice` 电池监测并订阅 `UIDevice.batteryLevelDidChangeNotification`，将读数转发给路由引擎。Apple 平台上的温度状态则直接在 `xybrid-core` 中从 `NSProcessInfo.thermalState` 获取。
 
 ## 初始化
 
@@ -178,10 +186,16 @@ SDK 提供便捷短别名：
 
 | 别名 | 完整类型 |
 |-------|-----------|
-| `ModelLoader` | `XybridModelLoader` |
 | `Model` | `XybridModel` |
 | `Envelope` | `XybridEnvelope` |
 | `Result` | `XybridResult` |
+| `VoiceInfo` | `XybridVoiceInfo` |
+| `GenerationConfig` | `XybridGenerationConfig` |
+| `XybridSDKError` | `XybridError` |
+
+`ModelLoader` 类型不存在，不要用错了。
+使用 `XybridModel(fromRegistry:)`, 或者 `XybridModel(fromBundle:)` /
+`XybridModel(fromDirectory:)` / `XybridModel(fromHuggingface:)` 来直接加载。
 
 ---
 

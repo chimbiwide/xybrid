@@ -95,9 +95,10 @@ Studio 使用相同的 Envelope 形态。只有在所选模型支持图像输入
 
 ```kotlin
 import ai.xybrid.Envelope
+import ai.xybrid.XybridModel
 import java.io.File
 
-val model = XybridModelLoader.fromRegistry("gemma-4-e2b").load()
+val model = XybridModel("gemma-4-e2b")
 val image = Envelope.image(File("cat.jpg").readBytes(), format = "jpeg")
 val prompt = Envelope.userMessage(
     text = "Describe this image.",
